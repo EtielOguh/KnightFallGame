@@ -12,7 +12,8 @@ index.html
     │   └── player.js       modelo do personagem, inventário e atributos derivados
     │       └── progression.js
     ├── save.js             persistência, versões e migrações
-    ├── dungeon.js          regiões, estágios, encontros, recompensas e desbloqueios
+    ├── dungeon.js          regiões, metas de abate, recompensas e desbloqueios
+    ├── farm.js             ondas, IDs, respawn e propriedade de projéteis
     ├── forge.js            custos e transações atômicas de reforço/compra/venda
     ├── skills.js           habilidades, vigor, passivas e maestria em combate
     ├── loot.js             rolagem pura das tabelas de recompensa
@@ -48,6 +49,7 @@ Permanecem intencionalmente inativos, mas reutilizáveis, o conteúdo avançado 
 | `progression.js` | Curvas de XP, level-up, domínio e simulações | Estado global |
 | `save.js` | Envelope versionado, leitura, gravação, fallback e migrações | Regras de combate |
 | `dungeon.js` | Configuração regional, desbloqueios, encontros, avanço e recompensa única | DOM, Canvas e estado global |
+| `farm.js` | Runtime transitório e testável de ondas, limites, IDs e idempotência por inimigo | Save, DOM ou regras de item |
 | `forge.js` | Custo, prévia e transações de reforço, compra e venda | DOM, Canvas, save ou moedas paralelas |
 | `skills.js` | Desbloqueio, níveis, vigor, cooldowns, fases, colisão declarativa, passivas e concessão protegida de maestria | DOM, Canvas ou estado global |
 | `loot.js` | Filtragem e rolagem testável das tabelas de loot | Mutação do inventário |
@@ -82,11 +84,13 @@ state
 │   ├── regionProgress
 │   │   └── <regionId>
 │   │       ├── highestUnlockedFloor
-│   │       ├── currentExpeditionFloor
+│   │       ├── selectedFloor
+│   │       ├── floorKills
+│   │       ├── floorObjectivesCompleted
 │   │       ├── floorCompletions
 │   │       ├── bossVictories
 │   │       └── uniqueRewardsClaimed
-│   └── bossesDefeated
+│   └── bossesDefeated          legado neutralizado; não é fonte de gameplay
 ├── settings                    áudio
 ├── systems                     sessões futuras/legadas
 ├── flags
@@ -159,11 +163,11 @@ Para adicionar um equipamento:
 
 Contagens de itens são obtidas do inventário com `inventoryCount`; não existe um segundo contador de poções. XP necessário é calculado por `playerExpRequired`; não é persistido como `nextXp`.
 
-O encontro ativo, seus inimigos, estados de IA, projéteis, timers de animação, teclas pressionadas, partículas e efeitos são transitórios e não entram no save. `encounter.enemies` já é uma coleção, embora os encontros atuais criem um inimigo, permitindo ampliar a quantidade sem trocar o modelo.
+O encontro ativo, `farmRuntime`, inimigos, estados de IA, projéteis, timers, teclas, partículas e efeitos são transitórios e não entram no save. Cada inimigo recebe ID, estado, animação de morte e trava de recompensa próprios. Projéteis carregam `ownerId`; o limite configurável impede crescimento sem controle. A fila de IDs recompensados mantém no máximo 512 entradas por sessão.
 
 ## Caverna Sombria
 
-`GAME_CONFIG.firstCave` é a fonte única das 20 etapas. Cada faixa declara intervalo, arquétipo, estatísticas, parâmetros de IA, recompensas, loot e visual. `createEncounterSpec` transforma a faixa e o andar em uma especificação usada pelo loop.
+`GAME_CONFIG.firstCave` é a fonte única das 20 etapas e do farm contínuo. `farm.unlockKills` define a meta de cada andar; `farm.bands` define tamanho da onda, teto ativo, orçamento de ameaça e pesos de papéis; `farm.roles` aplica variações comum, rápida, resistente, distante e elite sem duplicar a IA. `createWavePlan` e `createEncounterSpec` transformam esses dados em ondas e atores.
 
 - 1–5: comuns, perseguição e corte simples;
 - 6–10: guerreiros, golpe amplo e recuperação mais longa;
@@ -171,9 +175,9 @@ O encontro ativo, seus inimigos, estados de IA, projéteis, timers de animação
 - 16–19: elites, golpe pesado e investida sinalizados;
 - 20: Rei Goblin, golpe pesado, investida, área, fase 2 e animação de derrota.
 
-A IA usa os estados `patrol`, `chase`, `telegraph`, `attack`, `recover`, `hurt` e `dying`. A navegação mantém linha direta, A* e deslizamento por obstáculos. Todo ataque perigoso passa por `telegraph`; a direção é travada no começo da preparação para oferecer uma janela real de reação.
+A IA usa os estados `patrol`, `chase`, `telegraph`, `attack`, `recover`, `hurt` e `dying`. A navegação mantém linha direta, A* e deslizamento por obstáculos. O orçamento de A* limita recálculos por quadro e cada ator recebe um intervalo de replanejamento; separação física impede empilhamento. Todo ataque perigoso passa por `telegraph`; a direção é travada no começo da preparação para oferecer uma janela real de reação.
 
-Ao morrer, o inimigo e o encontro recebem uma trava de recompensa antes de XP, moedas, loot ou avanço serem aplicados. O avanço e o save ocorrem antes do fim da animação de morte; recarregar durante a animação não repete a recompensa. O maior andar desbloqueado e o andar atual são persistidos separadamente. Morrer ou retornar à vila limpa apenas a expedição; conquistas e recompensas únicas permanecem.
+Ao morrer, somente o inimigo recebe a trava de recompensa antes de XP, moedas e loot. O abate é salvo antes do fim da animação; matar outro ator não apaga seus projéteis nem encerra a sessão. Ao atingir a meta, o próximo andar é desbloqueado, mas `selectedFloor` não muda: o jogador permanece farmando até sair e escolher outro andar no mapa. O Rei Goblin reaparece após uma pausa, contabiliza vitórias repetíveis e mantém a recompensa única protegida. As metas provisórias são 5–8, 8–12, 12–18 e 18–25 abates nas quatro faixas, mais uma vitória no andar 20.
 
 ## Regiões e Bosque das Cinzas
 
@@ -181,16 +185,16 @@ Ao morrer, o inimigo e o encontro recebem uma trava de recompensa antes de XP, m
 
 Cada região possui um registro próprio em `world.regionProgress`; selecionar outra região nunca copia ou reinicia o progresso anterior. A antiga `world.caveProgress` é aceita somente pela migração e convertida para `regionProgress.caverna_sombria`. O runtime mantém a cena interna `cave` por compatibilidade, mas cenário, obstáculos, encontros, loot e chefe vêm de `currentRegionId`.
 
-O Bosque das Cinzas é a segunda região completa, desbloqueada pela derrota do Rei Goblin. Seus dez estágios são declarados em `GAME_CONFIG.ashenGrove`: feras rápidas, cultistas com projéteis de brasa, entes com golpes pesados/área e o Cervo-Rei Putrificado com golpe pesado, investida, área e segunda fase. Cenário, silhuetas, armas, projéteis, efeitos e equipamentos são procedurais no Canvas. Montanhas do Lamento, Catacumbas Esquecidas e Fortaleza do Eclipse permanecem apenas no catálogo, sem rotas jogáveis incompletas.
+O Bosque das Cinzas é a segunda região completa, desbloqueada por `regionProgress.caverna_sombria.bossVictories`. Seus dez estágios continuam com o fluxo anterior de um encontro e avanço explícito; o farm contínuo deste pacote está habilitado somente em `firstCave.farm.continuous`. Isso evita expandir ou rebalancear antecipadamente a segunda região. Montanhas do Lamento, Catacumbas Esquecidas e Fortaleza do Eclipse permanecem apenas no catálogo.
 
 ## Save e migração
 
-O formato atual usa a chave `knightfall.save`, envelope versão 6:
+O formato atual usa a chave `knightfall.save`, envelope versão 7:
 
 ```json
 {
   "game": "KnightFall",
-  "version": 6,
+  "version": 7,
   "savedAt": "ISO-8601",
   "state": {}
 }
@@ -202,7 +206,7 @@ A leitura tenta, nesta ordem:
 2. `knightfall.visual.v1`, usado pelo protótipo Canvas;
 3. `ecosDoAbismo.save`, usado pela interface textual antiga.
 
-Cada formato possui migração explícita antes de passar por `normalizeGameState`. A migração de equipamento converte `itemId` em `definitionId`, `level` em `enhancementLevel`, `armor` em `chest` e resolve o antigo `charm` para `ring` ou `amulet`. A versão 4 acrescentou `world.caveProgress`; a versão 5 normalizou habilidades e maestria; a versão 6 converte a caverna única em `world.regionProgress` e acrescenta o Bosque das Cinzas sem apagar dados anteriores. Valores numéricos são limitados, referências inválidas são removidas e saves de versão futura são recusados.
+Cada formato possui migração explícita antes de `normalizeGameState`. A versão 7 converte `currentExpeditionFloor` em `selectedFloor`, cria abates e objetivos por andar e reconhece como concluídos todos os andares que um save antigo já havia desbloqueado. `bossesDefeated` antigo é importado para `bossVictories` da região correspondente e depois neutralizado, eliminando a fonte duplicada. Nível, XP, moedas, inventário, UIDs, equipamento e reforços são preservados. Valores inválidos são limitados e saves futuros são recusados.
 
 O snapshot sempre retorna o personagem à Clareira ao continuar, preservando a regra anterior de não restaurar uma luta no meio.
 

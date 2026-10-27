@@ -1,8 +1,12 @@
 import { EQUIPMENT_SLOTS, GAME_CONFIG, ITEMS, RARITIES, SKILLS } from "./data.js";
 import {
-  abandonCaveExpedition, advanceCaveFloor, beginCaveExpedition, createEncounterSpec,
-  ENEMY_STATES, getRegionConfig, grantEncounterRewards, regionUnlockStatus
+  abandonCaveExpedition, beginCaveExpedition, createEncounterSpec, ENEMY_STATES,
+  getFloorUnlockTarget, getRegionConfig, grantEncounterRewards, recordFloorKill,
+  regionUnlockStatus, selectCaveFloor
 } from "./dungeon.js";
+import {
+  addOwnedProjectile, claimEnemyReward, createFarmRuntime, updateFarmSpawner
+} from "./farm.js";
 import { gameAudio } from "./music.js";
 import {
   addInventoryItem, calculateItemStats, calculateStatBreakdown, calculateStats, canEquipItem,
@@ -52,7 +56,8 @@ const ui = Object.fromEntries([
 let state = createInitialState();
 let playing = false;
 let encounter = createRuntimeEncounter();
-let spawnTimer = 0;
+let farmRuntime = null;
+let pathfindBudget = 0;
 let lastTime = performance.now();
 let elapsed = 0;
 const PLAYER_ATTACK_DURATION = GAME_CONFIG.combat.playerAttackDuration;
@@ -104,11 +109,14 @@ function distance(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
 function randomBetween(min, max) { return min + Math.random() * (max - min); }
 
 function createRuntimeEncounter() {
-  return { id: `encounter_${Date.now()}_${Math.random()}`, status: "idle", spec: null, enemies: [], rewardGranted: false, rewardResult: null };
+  return { id: `encounter_${Date.now()}_${Math.random()}`, status: "idle", spec: null, enemies: [], rewardResults: [] };
 }
 
 function primaryEnemy() {
-  return encounter.enemies.find(actor => actor.state !== ENEMY_STATES.DYING) || encounter.enemies[0] || null;
+  const living = encounter.enemies.filter(actor => actor.state !== ENEMY_STATES.DYING);
+  return living.find(actor => actor.spec.boss)
+    || living.sort((a, b) => distance(a, state.player) - distance(b, state.player))[0]
+    || encounter.enemies[0] || null;
 }
 
 function currentRegionConfig() { return getRegionConfig(state.world.currentRegionId); }
@@ -118,6 +126,7 @@ function currentRegionDefinition() { return GAME_CONFIG.regions[state.world.curr
 function clearEncounterRuntime(status = "idle") {
   encounter = createRuntimeEncounter();
   encounter.status = status;
+  farmRuntime = null;
   projectiles.length = 0;
   masteryTracker = createMasteryTracker();
   skillRuntime.active = null;
@@ -156,7 +165,6 @@ function startGame(useSave) {
   if (!resumed) state = createInitialState();
   playing = true;
   clearEncounterRuntime();
-  spawnTimer = 0;
   attackTimer = 0;
   attackHitPending = false;
   basicAttackEventId = null;
@@ -217,14 +225,22 @@ function updateUI() {
     : `<span>♦</span> ${regionDefinition.name}`;
   const displayedFloor = state.world.scene === "cave" && encounter.spec
     ? encounter.spec.floor
-    : cave.currentExpeditionFloor || cave.highestUnlockedFloor;
+    : cave.selectedFloor || cave.highestUnlockedFloor;
+  const floorKills = cave.floorKills[displayedFloor] || 0;
+  const floorTarget = getFloorUnlockTarget(displayedFloor, regionConfig);
   ui["cave-floor-badge"].hidden = state.world.scene !== "cave";
-  ui["cave-floor-value"].textContent = `${displayedFloor} / ${regionConfig.totalFloors}`;
+  ui["cave-floor-value"].textContent = displayedFloor === regionConfig.totalFloors
+    ? `${displayedFloor} / ${regionConfig.totalFloors} · CHEFE ${cave.bossVictories}`
+    : `${displayedFloor} / ${regionConfig.totalFloors} · ${Math.min(floorKills, floorTarget)} / ${floorTarget}`;
 
   if (state.world.scene === "cave") {
-    ui["objective-title"].textContent = enemy ? `Derrote ${enemy.name}` : encounter.status === "complete" ? "Encontro concluído" : "Mantenha a guarda";
-    ui["objective-detail"].textContent = `${regionDefinition.name} · estágio ${displayedFloor} · saída ao sul`;
-  } else if (firstCave.bossVictories > 0 || state.world.bossesDefeated.rei_goblin) {
+    ui["objective-title"].textContent = enemy
+      ? `${encounter.enemies.filter(actor => actor.state !== ENEMY_STATES.DYING).length} ameaça(s) ativa(s)`
+      : encounter.status === "complete" ? "Encontro concluído" : "A próxima onda se aproxima";
+    ui["objective-detail"].textContent = displayedFloor === regionConfig.totalFloors
+      ? `${regionDefinition.name} · chefe repetível · saída ao sul`
+      : `${floorKills} de ${floorTarget} abates · você escolhe quando avançar`;
+  } else if (firstCave.bossVictories > 0) {
     ui["objective-title"].textContent = "Novos caminhos estão abertos";
     ui["objective-detail"].textContent = "Use o mapa próximo à entrada para escolher uma região";
   } else if (firstCave.highestUnlockedFloor > 1) {
@@ -251,7 +267,11 @@ function updateUI() {
     const prices = { damage: damagePrice(), armor: armorPrice(), potion: GAME_CONFIG.economy.potionPrice, heal: GAME_CONFIG.economy.restPrice };
     const key = button.dataset.buy;
     const potionHasNoRoom = key === "potion" && !p.inventory.some(entry => entry.definitionId === "pocao_menor") && inventoryUsed(p) >= inventoryCapacity(p);
-    button.disabled = p.coins < prices[key] || potionHasNoRoom || (key === "heal" && p.hp >= stats.maxHp);
+    const upgrade = key === "damage" ? GAME_CONFIG.economy.attackUpgrade : key === "armor" ? GAME_CONFIG.economy.armorUpgrade : null;
+    const upgradeCount = key === "damage" ? p.progression.upgrades.attack : key === "armor" ? p.progression.upgrades.armor : 0;
+    const reachedPermanentCap = upgrade && upgradeCount >= upgrade.maxPurchases;
+    button.disabled = p.coins < prices[key] || potionHasNoRoom || reachedPermanentCap || (key === "heal" && p.hp >= stats.maxHp);
+    if (reachedPermanentCap) button.title = "Limite permanente alcançado";
   });
 }
 
@@ -273,10 +293,12 @@ function updateSkillHotbar() {
 
 function damagePrice() {
   const config = GAME_CONFIG.economy.attackUpgrade;
+  if (state.player.progression.upgrades.attack >= config.maxPurchases) return "MÁX";
   return config.basePrice + state.player.progression.upgrades.attack * config.priceStep;
 }
 function armorPrice() {
   const config = GAME_CONFIG.economy.armorUpgrade;
+  if (state.player.progression.upgrades.armor >= config.maxPurchases) return "MÁX";
   return config.basePrice + state.player.progression.upgrades.armor * config.priceStep;
 }
 
@@ -898,17 +920,24 @@ function openRegions() {
       montanhas_lamento: "Picos antigos aguardam uma futura expedição.", catacumbas_esquecidas: "Os mortos permanecem preparados em dados.", fortaleza_eclipse: "A cidadela final permanece além do horizonte."
     };
     const buttonLabel = definition.status === "planned" ? "Em preparação" : status.unlocked ? "Viajar" : status.reason;
-    card.innerHTML = `<span class="eyebrow">REGIÃO ${String(definition.order).padStart(2, "0")}</span><h3>${definition.name}</h3><p>${descriptions[id]}</p><dl><div><dt>NÍVEL RECOMENDADO</dt><dd>${definition.recommendedLevel.join("–")}</dd></div><div><dt>PROGRESSO</dt><dd>${progress ? `${progress.highestUnlockedFloor} / ${getRegionConfig(id).totalFloors}` : "—"}</dd></div></dl><button type="button" ${status.unlocked ? "" : "disabled"}>${buttonLabel}</button>`;
-    card.querySelector("button").addEventListener("click", () => enterRegion(id));
+    const floorOptions = status.unlocked && progress
+      ? `<label class="region-floor-select">ANDAR <select id="region-floor-${id}" name="region-floor-${id}" aria-label="Andar de ${definition.name}">${Array.from({ length: progress.highestUnlockedFloor }, (_, index) => index + 1).map(floor => `<option value="${floor}" ${floor === progress.selectedFloor ? "selected" : ""}>${floor}</option>`).join("")}</select></label>`
+      : "";
+    card.innerHTML = `<span class="eyebrow">REGIÃO ${String(definition.order).padStart(2, "0")}</span><h3>${definition.name}</h3><p>${descriptions[id]}</p><dl><div><dt>NÍVEL RECOMENDADO</dt><dd>${definition.recommendedLevel.join("–")}</dd></div><div><dt>PROGRESSO</dt><dd>${progress ? `${progress.highestUnlockedFloor} / ${getRegionConfig(id).totalFloors}` : "—"}</dd></div></dl>${floorOptions}<button type="button" ${status.unlocked ? "" : "disabled"}>${buttonLabel}</button>`;
+    card.querySelector("button").addEventListener("click", () => enterRegion(id, card.querySelector("select")?.value));
     return card;
   }));
   ui["region-dialog"].showModal();
 }
 
-function enterRegion(regionId) {
+function enterRegion(regionId, requestedFloor = null) {
   const status = regionUnlockStatus(state.world, regionId);
   if (!status.unlocked) return showToast(status.reason, true);
   state.world.currentRegionId = regionId;
+  if (requestedFloor != null) {
+    const selection = selectCaveFloor(currentRegionProgress(), requestedFloor, currentRegionConfig());
+    if (!selection.ok) return showToast(selection.reason, true);
+  }
   if (ui["region-dialog"].open) ui["region-dialog"].close();
   enterCave();
 }
@@ -945,7 +974,6 @@ function exitCave() {
   state.player.dirX = -1;
   state.player.dirY = 1;
   clearEncounterRuntime();
-  spawnTimer = 0;
   attackTimer = 0;
   attackHitPending = false;
   dodgeTimer = 0;
@@ -962,22 +990,27 @@ function startFloorEncounter(delay = .85) {
   clearEncounterRuntime("spawning");
   const config = currentRegionConfig();
   const progress = currentRegionProgress();
-  encounter.spec = createEncounterSpec(progress.currentExpeditionFloor || beginCaveExpedition(progress, config), config);
-  spawnTimer = delay;
+  const floor = progress.selectedFloor || beginCaveExpedition(progress, config);
+  encounter.spec = createEncounterSpec(floor, config);
+  farmRuntime = createFarmRuntime(config.id, floor, config, { id: encounter.id, initialDelay: delay });
   updateUI();
 }
 
-function spawnEnemy() {
-  const spec = encounter.spec || createEncounterSpec(currentRegionProgress().currentExpeditionFloor || 1, currentRegionConfig());
+function spawnEnemy(spawnRequest) {
+  if (!spawnRequest || !farmRuntime) return false;
+  const spec = createEncounterSpec(farmRuntime.floor, currentRegionConfig(), spawnRequest.roleId);
   const positions = GAME_CONFIG.goblin.spawnPositions.filter(([spawnX, spawnY]) => !isCaveBlocked(spawnX, spawnY, spec.boss ? 24 : 14));
   if (!positions.length) {
     console.error("[KnightFall] Nenhum ponto válido para criar o inimigo.");
-    spawnTimer = 1;
-    return;
+    farmRuntime.spawnTimer = 1;
+    return false;
   }
-  const [x, y] = positions[(spec.floor + state.world.caveVisits) % positions.length];
+  const available = positions.filter(([spawnX, spawnY]) => distance({ x: spawnX, y: spawnY }, state.player) > 170
+    && encounter.enemies.every(enemy => distance({ x: spawnX, y: spawnY }, enemy) > 72));
+  const pool = available.length ? available : positions;
+  const [x, y] = pool[(spawnRequest.waveIndex + spawnRequest.id.length + state.world.caveVisits) % pool.length];
   encounter.enemies.push({
-    id: `${encounter.id}_enemy_1`, name: spec.name, x, y, hp: spec.hp, maxHp: spec.hp,
+    id: spawnRequest.id, name: spec.name, x, y, hp: spec.hp, maxHp: spec.hp,
     level: spec.floor, speed: spec.speed, attack: spec.attack, facing: x > state.player.x ? -1 : 1,
     spec, phase: 1, phaseChanged: false, patternIndex: 0, state: ENEMY_STATES.PATROL,
     stateTimer: .5, stateDuration: .5, moving: false, attackAnimation: 0, hitApplied: false,
@@ -985,9 +1018,9 @@ function spawnEnemy() {
     rewardGranted: false, deathTimer: 0, deathDuration: spec.boss ? 1.65 : .78
   });
   encounter.status = "active";
-  spawnTimer = 0;
   updateUI();
-  showToast(`${spec.name} surgiu!`);
+  if (spec.boss) showToast(`${spec.name} surgiu!`);
+  return true;
 }
 
 function playerAttack() {
@@ -1118,15 +1151,13 @@ function applyPlayerDamage(enemy, multiplier, eventId, source = "basic") {
 }
 
 function beginEnemyDeath(defeated) {
-  if (defeated.rewardGranted || encounter.rewardGranted) return;
+  if (defeated.rewardGranted || !farmRuntime || !claimEnemyReward(farmRuntime, defeated.id)) return;
   defeated.rewardGranted = true;
-  encounter.rewardGranted = true;
   defeated.state = ENEMY_STATES.DYING;
   defeated.stateTimer = defeated.deathDuration;
   defeated.stateDuration = defeated.deathDuration;
   defeated.deathTimer = defeated.deathDuration;
   defeated.moving = false;
-  projectiles.length = 0;
 
   const regionProgress = currentRegionProgress();
   const regionConfig = currentRegionConfig();
@@ -1137,6 +1168,7 @@ function beginEnemyDeath(defeated) {
   state.player.coins += totalCoins;
   state.player.progression.kills += 1;
   addFloater(defeated.x, defeated.y - 92, `+${totalCoins} moedas`, "#f5d787");
+  addFloater(defeated.x, defeated.y - 108, `+${totalXp} XP`, "#9fc7dc");
   burst(defeated.x, defeated.y - 30, defeated.spec.boss ? "#e0b84f" : "#81964f", defeated.spec.boss ? 32 : 14);
   playTone(220, .07, .12, "triangle");
   window.setTimeout(() => playTone(330, .05, .14, "triangle"), 90);
@@ -1156,50 +1188,56 @@ function beginEnemyDeath(defeated) {
   if (progression.levels) {
     state.player.hp = calculateStats(state.player).maxHp;
   }
-  const completion = advanceCaveFloor(regionProgress, defeated.spec.floor, regionConfig);
-  if (completion.bossDefeated) {
-    state.world.bossesDefeated[currentRegionDefinition().bossId] = regionProgress.bossVictories;
-  }
-  encounter.rewardResult = { ...reward, totalXp, totalCoins, collected, missed, progression, completion };
+  const progressResult = recordFloorKill(regionProgress, defeated.spec.floor, regionConfig, { boss: defeated.spec.boss });
+  encounter.rewardResults.push({ enemyId: defeated.id, ...reward, totalXp, totalCoins, collected, missed, progression, progress: progressResult });
+  if (encounter.rewardResults.length > 30) encounter.rewardResults.shift();
+  const messages = [];
+  if (progressResult.unlocked) messages.push(`Andar ${progressResult.nextFloor} desbloqueado — o farm continua aqui.`);
+  if (defeated.spec.boss) messages.push(`${defeated.name} derrotado. Ele retornará para outro desafio.`);
+  if (collected.length) messages.push(`Loot: ${collected.join(", ")}.`);
+  if (missed.length) messages.push(`Mochila cheia: ${missed.join(", ")}.`);
+  if (messages.length) showToast(messages.join(" "), missed.length > 0 && !collected.length);
   updateUI();
   saveGame();
 }
 
 function finalizeEnemyDeath(defeated) {
   encounter.enemies = encounter.enemies.filter(enemy => enemy.id !== defeated.id);
-  if (encounter.enemies.length || encounter.status === "complete") return;
-  encounter.status = "complete";
-  showEncounterComplete();
-}
-
-function showEncounterComplete() {
-  const result = encounter.rewardResult;
-  if (!result || ui["encounter-dialog"].open) return;
-  const boss = encounter.spec.boss;
-  ui["encounter-kicker"].textContent = boss ? "A COROA CAIU" : `ANDAR ${encounter.spec.floor} CONCLUÍDO`;
-  ui["encounter-title"].textContent = boss ? `${encounter.spec.name} foi derrotado` : "O caminho adiante está aberto";
-  ui["encounter-summary"].textContent = boss
-    ? `${currentRegionDefinition().name} foi vencida. Você pode repetir o confronto ou retornar à clareira.`
-    : `O andar ${result.completion.nextFloor} aguarda. Você pode avançar agora ou guardar sua conquista na vila.`;
-  const itemText = result.collected.length ? `<span class="loot-summary">◆ ${result.collected.join(", ")}</span>` : "";
-  const missedText = result.missed.length ? `<small class="loot-missed">Mochila cheia: ${result.missed.join(", ")}</small>` : "";
-  ui["encounter-rewards"].innerHTML = `<span>✦ ${result.totalXp} XP</span><span>● ${result.totalCoins} moedas</span>${itemText}${missedText}`;
-  ui["advance-floor-button"].textContent = boss ? "Enfrentar novamente" : `Avançar ao andar ${result.completion.nextFloor}`;
-  keys.clear();
-  ui["encounter-dialog"].showModal();
+  if (!encounter.enemies.length && currentRegionConfig().farm?.continuous !== true) {
+    encounter.status = "complete";
+    showEncounterComplete();
+  }
   updateUI();
 }
 
+function showEncounterComplete() {
+  const result = encounter.rewardResults[encounter.rewardResults.length - 1];
+  if (!result || ui["encounter-dialog"].open) return;
+  const boss = encounter.spec.boss;
+  ui["encounter-kicker"].textContent = boss ? "CHEFE DERROTADO" : `ESTÁGIO ${encounter.spec.floor} CONCLUÍDO`;
+  ui["encounter-title"].textContent = boss ? `${encounter.spec.name} foi derrotado` : "O caminho adiante está aberto";
+  ui["encounter-summary"].textContent = boss
+    ? `${currentRegionDefinition().name} foi vencida. O confronto pode ser repetido.`
+    : `O estágio ${result.progress.nextFloor} está disponível nesta expedição.`;
+  const itemText = result.collected.length ? `<span class="loot-summary">◆ ${result.collected.join(", ")}</span>` : "";
+  const missedText = result.missed.length ? `<small class="loot-missed">Mochila cheia: ${result.missed.join(", ")}</small>` : "";
+  ui["encounter-rewards"].innerHTML = `<span>✦ ${result.totalXp} XP</span><span>● ${result.totalCoins} moedas</span>${itemText}${missedText}`;
+  ui["advance-floor-button"].textContent = boss ? "Enfrentar novamente" : `Avançar ao estágio ${result.progress.nextFloor}`;
+  keys.clear();
+  ui["encounter-dialog"].showModal();
+}
+
 function advanceEncounter() {
-  if (!ui["encounter-dialog"].open) return;
+  const result = encounter.rewardResults[encounter.rewardResults.length - 1];
+  if (!ui["encounter-dialog"].open || !result) return;
   ui["encounter-dialog"].close();
+  if (result.progress.nextFloor) selectCaveFloor(currentRegionProgress(), result.progress.nextFloor, currentRegionConfig());
   state.player.x = 480;
   state.player.y = 444;
   state.player.dirX = 0;
   state.player.dirY = -1;
   transitionFlash = 1;
   startFloorEncounter(.9);
-  showToast(`Avançando ao estágio ${currentRegionProgress().currentExpeditionFloor}...`);
   saveGame();
 }
 
@@ -1221,6 +1259,8 @@ function usePotion() {
 
 function buyItem(kind) {
   const p = state.player;
+  if (kind === "damage" && p.progression.upgrades.attack >= GAME_CONFIG.economy.attackUpgrade.maxPurchases) return showToast("Treino de ataque já está no limite.", true);
+  if (kind === "armor" && p.progression.upgrades.armor >= GAME_CONFIG.economy.armorUpgrade.maxPurchases) return showToast("Treino de defesa já está no limite.", true);
   const purchases = {
     damage: {
       price: damagePrice(),
@@ -1301,7 +1341,6 @@ function returnToVillage() {
   state.player.y = 365;
   state.player.hp = Math.max(50, Math.round(calculateStats(state.player).maxHp * .6));
   clearEncounterRuntime();
-  spawnTimer = 0;
   dodgeTimer = 0;
   dodgeCooldownTimer = 0;
   invulnerableTimer = 0;
@@ -1368,11 +1407,11 @@ function update(dt) {
   updateInteractionPrompt();
 
   if (state.world.scene === "cave") {
-    if (encounter.status === "spawning" && !encounter.enemies.length && spawnTimer > 0) {
-      spawnTimer -= dt;
-      if (spawnTimer <= 0) spawnEnemy();
-    }
+    pathfindBudget = currentRegionConfig().farm?.maxPathfindsPerFrame || 1;
+    const spawnRequest = farmRuntime ? updateFarmSpawner(farmRuntime, dt, encounter.enemies.length) : null;
+    if (spawnRequest) spawnEnemy(spawnRequest);
     encounter.enemies.slice().forEach(enemy => updateEnemy(enemy, dt));
+    separateEnemies();
     updateProjectiles(dt);
   }
 
@@ -1547,11 +1586,11 @@ function spawnEnemyProjectile(enemy) {
   const dy = target.y - enemy.y;
   const length = Math.max(1, Math.hypot(dx, dy));
   const speed = enemy.phase === 2 ? 295 : 255;
-  projectiles.push({
-    id: `${enemy.id}_${enemy.attackKind}_${elapsed}`, kind: enemy.attackKind,
+  addOwnedProjectile(projectiles, {
+    id: `${enemy.id}_${enemy.attackKind}_${elapsed}_${enemy.patternIndex}`, ownerId: enemy.id, kind: enemy.attackKind,
     x: enemy.x, y: enemy.y - 30, vx: dx / length * speed, vy: dy / length * speed,
     damage: enemy.attack, life: 2.2
-  });
+  }, currentRegionConfig().farm?.projectileCap || 12);
 }
 
 function updateProjectiles(dt) {
@@ -1579,9 +1618,11 @@ function faceEnemyToward(enemy, target) {
 function moveEnemyToward(enemy, destination, dt, speedMultiplier = 1) {
   enemy.navTimer -= dt;
   const directRoute = hasClearCaveLine(enemy, destination);
-  if (!directRoute && (enemy.navTimer <= 0 || !enemy.navPath.length)) {
+  if (!directRoute && (enemy.navTimer <= 0 || !enemy.navPath.length) && pathfindBudget > 0) {
+    pathfindBudget -= 1;
     enemy.navPath = findCavePath(enemy, destination);
-    enemy.navTimer = .28;
+    const [minimum, maximum] = currentRegionConfig().farm?.navigationRepath || [.42, .68];
+    enemy.navTimer = randomBetween(minimum, maximum);
   }
   let target = destination;
   if (!directRoute && enemy.navPath.length) {
@@ -1634,6 +1675,29 @@ function moveEnemyWithSliding(enemy, dx, dy) {
   if (!isCaveBlocked(nextX, enemy.y, radius)) { enemy.x = nextX; moved = true; }
   if (!isCaveBlocked(enemy.x, nextY, radius)) { enemy.y = nextY; moved = true; }
   if (!moved) enemy.navTimer = 0;
+}
+
+function separateEnemies() {
+  const farm = currentRegionConfig().farm || {};
+  const minimumDistance = farm.separationRadius || 30;
+  const strength = farm.separationStrength || .45;
+  const living = encounter.enemies.filter(enemy => enemy.state !== ENEMY_STATES.DYING);
+  for (let left = 0; left < living.length; left += 1) {
+    for (let right = left + 1; right < living.length; right += 1) {
+      const first = living[left];
+      const second = living[right];
+      let dx = second.x - first.x;
+      let dy = second.y - first.y;
+      let gap = Math.hypot(dx, dy);
+      if (gap >= minimumDistance) continue;
+      if (gap < .01) { dx = left % 2 ? 1 : -1; dy = .5; gap = Math.hypot(dx, dy); }
+      const push = (minimumDistance - gap) * strength * .5;
+      const pushX = dx / gap * push;
+      const pushY = dy / gap * push;
+      moveEnemyWithSliding(first, -pushX, -pushY);
+      moveEnemyWithSliding(second, pushX, pushY);
+    }
+  }
 }
 
 function hasClearCaveLine(from, to) {
@@ -1940,7 +2004,7 @@ function drawCave() {
   drawTorch(95, 245); drawTorch(865, 245);
   drawCaveExit();
 
-  if (encounter.status === "spawning" && spawnTimer > 0) {
+  if (farmRuntime && !encounter.enemies.length && (farmRuntime.spawnTimer > 0 || farmRuntime.breakTimer > 0)) {
     ctx.fillStyle = `rgba(175, 57, 43, ${.2 + Math.sin(elapsed * 7) * .08})`;
     ctx.beginPath(); ctx.ellipse(480, 270, 85, 25, 0, 0, Math.PI * 2); ctx.fill();
   }
@@ -1982,7 +2046,7 @@ function drawAshenGrove() {
   }
   ctx.globalAlpha = 1;
 
-  if (encounter.status === "spawning" && spawnTimer > 0) {
+  if (farmRuntime && !encounter.enemies.length && (farmRuntime.spawnTimer > 0 || farmRuntime.breakTimer > 0)) {
     ctx.fillStyle = `rgba(205, 91, 52, ${.18 + Math.sin(elapsed * 7) * .07})`;
     ctx.fillRect(405, 255, 150, 22);
     ctx.fillRect(427, 246, 106, 40);
@@ -2826,7 +2890,7 @@ window.KnightFallDebug = {
     const progress = currentRegionProgress();
     const target = clamp(Math.floor(Number(floor) || 1), 1, currentRegionConfig().totalFloors);
     progress.highestUnlockedFloor = Math.max(progress.highestUnlockedFloor, target);
-    progress.currentExpeditionFloor = target;
+    progress.selectedFloor = target;
     if (state.world.scene === "cave") startFloorEncounter(.05);
     updateUI();
     return target;
@@ -2834,7 +2898,10 @@ window.KnightFallDebug = {
   unlockRegion(regionId) {
     const definition = GAME_CONFIG.regions[regionId];
     if (!definition || definition.status !== "playable") return false;
-    if (definition.unlock?.bossId) state.world.bossesDefeated[definition.unlock.bossId] = Math.max(1, state.world.bossesDefeated[definition.unlock.bossId] || 0);
+    if (definition.unlock?.bossId) {
+      const sourceRegion = Object.entries(GAME_CONFIG.regions).find(([, entry]) => entry.bossId === definition.unlock.bossId)?.[0];
+      if (sourceRegion) state.world.regionProgress[sourceRegion].bossVictories = Math.max(1, state.world.regionProgress[sourceRegion].bossVictories || 0);
+    }
     updateUI(); saveGame(); return regionUnlockStatus(state.world, regionId).unlocked;
   },
   damageEnemy(amount = 1) {

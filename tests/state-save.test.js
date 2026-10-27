@@ -4,9 +4,14 @@ import assert from "node:assert/strict";
 import { EQUIPMENT_SLOTS, GAME_CONFIG, ITEMS, SKILLS } from "../js/data.js";
 import {
   abandonCaveExpedition, advanceCaveFloor, beginCaveExpedition, createCaveProgress,
-  createEncounterSpec, createRegionProgress, getCaveTier, getRegionConfig,
-  grantEncounterRewards, regionUnlockStatus
+  createEncounterSpec, createRegionProgress, createWavePlan, getCaveTier, getFloorFarmConfig,
+  getFloorUnlockTarget, getRegionConfig, grantEncounterRewards, recordFloorKill,
+  regionUnlockStatus, selectCaveFloor
 } from "../js/dungeon.js";
+import {
+  activeEnemyCap, addOwnedProjectile, claimEnemyReward, createFarmRuntime,
+  removeOwnedProjectiles, updateFarmSpawner
+} from "../js/farm.js";
 import { rollLoot } from "../js/loot.js";
 import {
   calculateSalePrice, enhanceEquipment, getEnhancementCost, purchaseEquipment, sellEquipment
@@ -21,7 +26,7 @@ import {
   awardMasteryForHit, beginSkill, canUpgradeSkill, cancelSkill, createMasteryTracker,
   createSkillRuntime, getSkillLevel, skillPhaseAt, skillTargetHit, tickSkillRuntime, upgradeSkill
 } from "../js/skills.js";
-import { createInitialState, normalizeGameState, validateGameState } from "../js/state.js";
+import { createInitialState, createSaveSnapshot, normalizeGameState, validateGameState } from "../js/state.js";
 import {
   PROGRESSION_HYPOTHESES, createSeededRandom, simulateCohort, simulateProgression
 } from "../js/simulation.js";
@@ -297,19 +302,23 @@ test("as faixas dos 20 andares selecionam arquétipos por configuração", () =>
   assert.equal(createEncounterSpec(20).boss, true);
 });
 
-test("andar atual e maior andar desbloqueado evoluem separadamente", () => {
+test("andar selecionado e maior andar desbloqueado evoluem separadamente", () => {
   const progress = createCaveProgress();
   assert.equal(beginCaveExpedition(progress), 1);
-  advanceCaveFloor(progress, 1);
-  assert.equal(progress.currentExpeditionFloor, 2);
+  const target = getFloorUnlockTarget(1);
+  for (let kill = 1; kill < target; kill += 1) recordFloorKill(progress, 1);
+  assert.equal(progress.highestUnlockedFloor, 1);
+  const unlocked = recordFloorKill(progress, 1);
+  assert.equal(unlocked.unlocked, true);
   assert.equal(progress.highestUnlockedFloor, 2);
-  progress.currentExpeditionFloor = null;
+  assert.equal(progress.selectedFloor, 1);
+  assert.equal(selectCaveFloor(progress, 3).ok, false);
+  assert.equal(selectCaveFloor(progress, 2).ok, true);
   assert.equal(beginCaveExpedition(progress), 2);
-  progress.currentExpeditionFloor = 1;
   advanceCaveFloor(progress, 1);
   assert.equal(progress.highestUnlockedFloor, 2);
   abandonCaveExpedition(progress);
-  assert.equal(progress.currentExpeditionFloor, null);
+  assert.equal(progress.selectedFloor, 2);
   assert.equal(progress.highestUnlockedFloor, 2);
 });
 
@@ -327,7 +336,7 @@ test("Bosque das Cinzas desbloqueia somente após a derrota do Rei Goblin", () =
   const state = createInitialState();
   assert.deepEqual(regionUnlockStatus(state.world, "caverna_sombria"), { unlocked: true, reason: "" });
   assert.equal(regionUnlockStatus(state.world, "bosque_cinzas").unlocked, false);
-  state.world.bossesDefeated.rei_goblin = 1;
+  state.world.regionProgress.caverna_sombria.bossVictories = 1;
   assert.deepEqual(regionUnlockStatus(state.world, "bosque_cinzas"), { unlocked: true, reason: "" });
   assert.equal(regionUnlockStatus(state.world, "montanhas_lamento").unlocked, false);
 });
@@ -354,7 +363,7 @@ test("progresso e recompensa única permanecem independentes por região", () =>
   assert.equal(grove.highestUnlockedFloor, 1);
 
   grove.highestUnlockedFloor = 10;
-  grove.currentExpeditionFloor = 10;
+  grove.selectedFloor = 10;
   const boss = createEncounterSpec(10, GAME_CONFIG.ashenGrove);
   const first = grantEncounterRewards(grove, boss, () => 0);
   const repeated = grantEncounterRewards(grove, boss, () => 0);
@@ -366,7 +375,7 @@ test("progresso e recompensa única permanecem independentes por região", () =>
 test("save preserva região selecionada e progressos regionais sem misturá-los", () => {
   const state = createInitialState();
   state.world.currentRegionId = "bosque_cinzas";
-  state.world.bossesDefeated.rei_goblin = 1;
+  state.world.regionProgress.caverna_sombria.bossVictories = 1;
   state.world.regionProgress.caverna_sombria.highestUnlockedFloor = 20;
   state.world.regionProgress.bosque_cinzas.highestUnlockedFloor = 4;
   const restored = normalizeGameState(structuredClone(state));
@@ -380,12 +389,15 @@ test("progresso da caverna persiste e saves antigos recebem migração segura", 
   const state = createInitialState();
   const cave = state.world.regionProgress.caverna_sombria;
   cave.highestUnlockedFloor = 7;
-  cave.currentExpeditionFloor = 6;
+  cave.selectedFloor = 6;
+  cave.floorKills = { 1: 5, 6: 4 };
+  cave.floorObjectivesCompleted = { 1: true };
   cave.floorCompletions = { 1: 1, 5: 2 };
   assert.equal(saveGame(state, { storage, logger: quietLogger }), true);
   const restored = loadGame({ storage, logger: quietLogger });
   assert.equal(restored.world.regionProgress.caverna_sombria.highestUnlockedFloor, 7);
-  assert.equal(restored.world.regionProgress.caverna_sombria.currentExpeditionFloor, 6);
+  assert.equal(restored.world.regionProgress.caverna_sombria.selectedFloor, 6);
+  assert.ok(restored.world.regionProgress.caverna_sombria.floorKills[6] >= getFloorUnlockTarget(6));
   assert.equal(restored.world.regionProgress.caverna_sombria.floorCompletions[5], 2);
 
   const versionThree = createInitialState();
@@ -395,8 +407,127 @@ test("progresso da caverna persiste e saves antigos recebem migração segura", 
   delete versionThree.world.regionProgress;
   const migrated = decodeSave(JSON.stringify({ game: GAME_CONFIG.save.gameId, version: 3, state: versionThree }), SAVE_KEY);
   assert.equal(migrated.world.regionProgress.caverna_sombria.highestUnlockedFloor, 9);
-  assert.equal(migrated.world.regionProgress.caverna_sombria.currentExpeditionFloor, null);
+  assert.equal(migrated.world.regionProgress.caverna_sombria.selectedFloor, 9);
   assert.equal(migrated.world.regionProgress.bosque_cinzas.highestUnlockedFloor, 1);
+});
+
+test("save v6 migra para v7 sem perder personagem, equipamento ou andares", () => {
+  const legacy = createInitialState();
+  legacy.schemaVersion = 6;
+  legacy.player.level = 7;
+  legacy.player.xp = 91;
+  legacy.player.coins = 777;
+  legacy.world.bossesDefeated.rei_goblin = 1;
+  legacy.world.regionProgress.caverna_sombria = {
+    highestUnlockedFloor: 8,
+    currentExpeditionFloor: 5,
+    floorCompletions: { 1: 1, 7: 1 },
+    bossVictories: 0,
+    uniqueRewardsClaimed: {}
+  };
+  const weaponUid = legacy.player.equipment.weapon;
+  const payload = { game: GAME_CONFIG.save.gameId, version: 6, state: legacy };
+  const migrated = decodeSave(JSON.stringify(payload), SAVE_KEY);
+  const cave = migrated.world.regionProgress.caverna_sombria;
+  assert.equal(migrated.schemaVersion, 7);
+  assert.equal(migrated.player.level, 7);
+  assert.equal(migrated.player.xp, 91);
+  assert.equal(migrated.player.coins, 777);
+  assert.equal(migrated.player.equipment.weapon, weaponUid);
+  assert.equal(cave.highestUnlockedFloor, 8);
+  assert.equal(cave.selectedFloor, 5);
+  assert.equal(cave.bossVictories, 1);
+  assert.equal(cave.floorKills[20], 1);
+  assert.equal(cave.floorObjectivesCompleted[20], true);
+  assert.deepEqual(migrated.world.bossesDefeated, {});
+  assert.equal(cave.floorObjectivesCompleted[7], true);
+  assert.ok(cave.floorKills[7] >= getFloorUnlockTarget(7));
+});
+
+test("ondas respeitam orçamento, limite ativo, IDs únicos e respawn contínuo", () => {
+  const runtime = createFarmRuntime("caverna_sombria", 1, GAME_CONFIG.firstCave, { id: "farm-test" });
+  const random = () => .25;
+  const first = updateFarmSpawner(runtime, 0, 0, random);
+  assert.ok(first);
+  const second = updateFarmSpawner(runtime, 1, 1, random);
+  assert.ok(second);
+  assert.notEqual(first.id, second.id);
+  assert.equal(updateFarmSpawner(runtime, 1, activeEnemyCap(runtime), random), null);
+  runtime.spawnQueue.length = 0;
+  assert.equal(updateFarmSpawner(runtime, 0, 0, random), null);
+  const respawned = updateFarmSpawner(runtime, GAME_CONFIG.firstCave.farm.waveBreak + .1, 0, random);
+  assert.ok(respawned);
+  assert.ok(runtime.waveIndex >= 2);
+  const plan = createWavePlan(18, GAME_CONFIG.firstCave, random);
+  assert.ok(plan.length >= getFloorFarmConfig(18).waveSize[0]);
+  assert.ok(plan.length <= getFloorFarmConfig(18).waveSize[1]);
+});
+
+test("recompensas e projéteis são independentes por inimigo", () => {
+  const runtime = createFarmRuntime("caverna_sombria", 12, GAME_CONFIG.firstCave, { id: "ownership-test" });
+  assert.equal(claimEnemyReward(runtime, "enemy-a"), true);
+  assert.equal(claimEnemyReward(runtime, "enemy-a"), false);
+  assert.equal(claimEnemyReward(runtime, "enemy-b"), true);
+  const projectiles = [];
+  assert.equal(addOwnedProjectile(projectiles, { id: "arrow-a", ownerId: "enemy-a" }, 2), true);
+  assert.equal(addOwnedProjectile(projectiles, { id: "arrow-b", ownerId: "enemy-b" }, 2), true);
+  assert.equal(addOwnedProjectile(projectiles, { id: "arrow-c", ownerId: "enemy-c" }, 2), false);
+  assert.equal(removeOwnedProjectiles(projectiles, "enemy-a"), 1);
+  assert.deepEqual(projectiles.map(projectile => projectile.ownerId), ["enemy-b"]);
+});
+
+test("regiões sem farm contínuo encerram a onda sem respawn automático", () => {
+  const runtime = createFarmRuntime("bosque_cinzas", 1, GAME_CONFIG.ashenGrove, { id: "grove-test" });
+  const first = updateFarmSpawner(runtime, 0, 0, () => .5);
+  assert.ok(first);
+  assert.equal(runtime.waveIndex, 1);
+  assert.equal(updateFarmSpawner(runtime, 30, 0, () => .5), null);
+  assert.equal(runtime.waveIndex, 1);
+});
+
+test("morte e retorno seguro não apagam andar selecionado nem abates", () => {
+  const state = createInitialState();
+  const cave = state.world.regionProgress.caverna_sombria;
+  cave.highestUnlockedFloor = 8;
+  cave.selectedFloor = 6;
+  cave.floorKills[6] = 7;
+  state.world.scene = "cave";
+  const snapshot = createSaveSnapshot(state);
+  assert.equal(snapshot.world.scene, "village");
+  assert.equal(snapshot.world.regionProgress.caverna_sombria.selectedFloor, 6);
+  assert.equal(snapshot.world.regionProgress.caverna_sombria.floorKills[6], 9);
+});
+
+test("boss repetível contabiliza vitórias sem repetir recompensa única", () => {
+  const progress = createCaveProgress({ highestUnlockedFloor: 20, selectedFloor: 20 });
+  const boss = createEncounterSpec(20);
+  const firstReward = grantEncounterRewards(progress, boss, () => 0);
+  recordFloorKill(progress, 20, GAME_CONFIG.firstCave, { boss: true });
+  const repeatedReward = grantEncounterRewards(progress, boss, () => 0);
+  recordFloorKill(progress, 20, GAME_CONFIG.firstCave, { boss: true });
+  assert.ok(firstReward.firstVictory);
+  assert.equal(repeatedReward.firstVictory, null);
+  assert.equal(progress.bossVictories, 2);
+  assert.equal(progress.floorKills[20], 2);
+});
+
+test("limite de Bram bloqueia novas compras sem reduzir poder legado", () => {
+  const state = createInitialState();
+  state.player.progression.upgrades.attack = 12;
+  state.player.baseStats.attack += 36;
+  const normalized = normalizeGameState(state);
+  assert.equal(normalized.player.progression.upgrades.attack, 12);
+  assert.equal(normalized.player.baseStats.attack, 48);
+  assert.equal(GAME_CONFIG.economy.attackUpgrade.maxPurchases, 8);
+  assert.equal(GAME_CONFIG.economy.armorUpgrade.maxPurchases, 8);
+});
+
+test("metas da primeira caverna seguem as faixas provisórias autorizadas", () => {
+  for (let floor = 1; floor <= 4; floor += 1) assert.ok(getFloorUnlockTarget(floor) >= 5 && getFloorUnlockTarget(floor) <= 8);
+  for (let floor = 5; floor <= 9; floor += 1) assert.ok(getFloorUnlockTarget(floor) >= 8 && getFloorUnlockTarget(floor) <= 12);
+  for (let floor = 10; floor <= 14; floor += 1) assert.ok(getFloorUnlockTarget(floor) >= 12 && getFloorUnlockTarget(floor) <= 18);
+  for (let floor = 15; floor <= 19; floor += 1) assert.ok(getFloorUnlockTarget(floor) >= 18 && getFloorUnlockTarget(floor) <= 25);
+  assert.equal(getFloorUnlockTarget(20), 1);
 });
 
 function fundForge(player) {
@@ -615,7 +746,7 @@ test("simulação de progressão é determinística para a mesma semente", () =>
 test("coorte padrão respeita a cadência hipotética dos marcos principais", () => {
   const result = simulateCohort({ seed: 41021, runs: 80, profile: "standard" });
   assert.equal(result.completionRate, 1);
-  assert.ok(result.medianFightsToFirstLevel >= 2 && result.medianFightsToFirstLevel <= 5);
+  assert.ok(result.medianFightsToFirstLevel >= 15 && result.medianFightsToFirstLevel <= 30);
   assert.ok(result.meanImprovements > result.meanForgeEnhancements);
   for (const [milestone, [minimum, maximum]] of Object.entries(PROGRESSION_HYPOTHESES)) {
     const median = result.milestoneMedianSeconds[milestone];

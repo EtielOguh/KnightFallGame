@@ -1,82 +1,69 @@
-# KnightFall — relatório de refinamento
+# KnightFall — relatório do primeiro pacote de farm
 
 Data da rodada: 27 de outubro de 2026.
 
-## Como os números foram obtidos
+## Metodologia
 
-`js/simulation.js` executa uma aproximação determinística da primeira caverna. A mesma semente produz a mesma sequência de loot, dano evitado e decisões econômicas. O modelo reutiliza as definições reais de encontros, recompensas, XP, inventário, equipamento e forja, e varia apenas hipóteses de comportamento: precisão, cadência de ataque, esquiva, exploração e frequência de retorno à vila.
+`js/simulation.js` usa semente controlada e as tabelas reais de HP, dano, XP, loot, inventário, equipamento e forja. O modelo agora percorre as metas de abate, gera composições pelo orçamento de ameaça e contabiliza ondas, retornos táticos, mortes e progressão. Ele aproxima decisões de um jogador; não é telemetria e médias não garantem uma recompensa individual.
 
-Os números abaixo usam 250 execuções por perfil, sementes sequenciais iniciadas em `41021`. Eles são resultados de modelo, não telemetria de jogadores e não garantem duração real. Os marcos de 0–30 minutos são hipóteses para testes de usabilidade.
-
-Execute novamente com:
+Comando reproduzível:
 
 ```sh
 npm run simulate:balance -- --seed 41021 --runs 250
 ```
 
-## Principais indicadores
+Os valores “antes” foram registrados no baseline imediatamente anterior ao pacote. O modelo anterior simulava apenas um encontro por andar; por isso volume total, ouro total e duração não são comparações equivalentes. TTK, risco, nível final e marcos ainda são úteis como referência.
 
-| Indicador, jogador padrão | Antes | Depois |
+## Indicadores do perfil padrão
+
+| Indicador | Baseline de 20 encontros | Farm v7, 250 execuções |
 | --- | ---: | ---: |
-| Conclusão da Caverna Sombria | 100% | 100% |
-| Nível médio ao concluir | 10 | 9 |
-| Tempo médio por inimigo | 13,38 s | 13,88 s |
-| Ouro ganho / gasto | 1.774 / 491 | 1.775 / 714 |
-| Mortes médias | 3,00 | 1,67 |
-| Primeira recompensa | 0:08 | 0:08 |
-| Primeiro nível ou melhoria | 2:42 | 3:58 |
-| Primeira troca de equipamento | 7:58 | 7:10 |
-| Primeiro reforço | 15:37 | 14:48 |
-| Primeiro elite | 24:13 | 23:23 |
-| Rei Goblin: tempo / risco de vida | 24,74 s / 36,9% | 25,39 s / 39,9% |
+| Conclusão da Cave 1 | 100% | 100% |
+| Abates/vitórias médios | 20 | 259 obrigatórios; 261,52 tentativas |
+| Nível médio ao concluir | 9,00 | 9,84 |
+| Tempo médio por inimigo | 13,88 s | 9,57 s |
+| Mortes médias | 1,67 | 2,52 |
+| Ouro ganho / gasto | 1.775 / 714 | 5.300 / 2.305 |
+| Ouro médio por minuto | não medido | 75,44 |
+| Primeira recompensa | 0:08 | 0:07 |
+| Primeiro nível/melhoria | 3:58 | 4:43 |
+| Primeira troca de equipamento | 7:10 | 7:01 |
+| Primeiro reforço | 14:48 | 16:53 |
+| Primeira ameaça elite | 23:23 | 39:00 |
+| Rei Goblin: TTK / risco de vida | 25,39 s / 39,9% | 23,25 s / 32,9% |
 
-Depois do ajuste, as medianas do perfil padrão ficam dentro das cinco janelas propostas. Em 250 execuções, 83,6% fizeram a primeira troca de equipamento na janela e 94,8% fizeram o primeiro reforço nela. As outras três metas atingiram 100% no modelo.
+A chegada à faixa elite foi conscientemente recalibrada para uma hipótese de 35–50 minutos. A meta antiga de 20–30 minutos era compatível com um inimigo por andar, mas não com 122–151 abates até a faixa avançada. Em 250 execuções, 99,6% do perfil padrão ficaram nessa nova janela. A hipótese deve ser validada com jogadores reais antes de reduzir metas.
 
-O perfil padrão precisou de mediana de 4 combates para o primeiro nível e 21,67 combates para terminar (incluindo novas tentativas). Registrou 19,78 eventos de melhoria, sendo 6,86 trocas de equipamento e 1,92 reforços. Assim, tempo de exploração e frequência de progressão podem ser avaliados separadamente.
+## Parâmetros implantados
 
-Perfis são deliberadamente diferentes. O experiente chega aos marcos antes das janelas e não morre no modelo; o cauteloso registra 92% de conclusão, 4,02 mortes e chega ao primeiro elite em 30:06. Isso sugere validar a duração de deslocamento e recuperação com jogadores cautelosos, sem enfraquecer imediatamente o combate para todos.
+- Andares 1–4: 5, 6, 7 e 8 abates.
+- Andares 5–9: 8, 9, 10, 11 e 12 abates.
+- Andares 10–14: 12, 14, 15, 16 e 18 abates.
+- Andares 15–19: 18, 20, 21, 23 e 25 abates.
+- Andar 20: uma vitória para o objetivo; chefe e recompensa repetível continuam disponíveis.
+- Ondas: 2–4 posições planejadas, teto ativo de 2/3/3/4 e orçamento de ameaça por faixa.
+- Navegação: no máximo dois novos cálculos A* por quadro e replanejamento entre 0,42–0,68 s.
+- Projéteis: teto de 24 na Cave 1 e `ownerId` obrigatório.
+- Treino de Bram: oito compras futuras de ataque e oito de defesa. Saves acima disso não perdem atributos.
 
-## Ajustes de progressão e economia
+O XP comum foi reduzido porque agora há muitos inimigos por andar. Guerreiro, arqueiro e elite continuam aumentando a eficiência de XP/min, enquanto o chefe mantém XP relevante e prêmio único separado. A curva global de nível não foi alterada.
 
-- XP inicial passou de base 70 para 120. A curva continua multiplicativa em 1,42, limitada por teste de regressão para não superar 1,45 entre níveis nesta faixa.
-- Espada curta, capacete e botas agora custam 72, 65 e 55 moedas. Nenhum equipamento ou melhoria permanente relevante pode ser comprado com as 35 moedas iniciais.
-- Melhorias permanentes começam em 65/70 moedas e crescem de forma linear por compra, evitando um salto exponencial oculto.
-- O primeiro reforço custa 30 moedas e 2 minérios. Os custos de ouro de +1 a +10 agora são estritamente crescentes; antes, +2 custava menos que +1.
-- O perfil padrão termina com cerca de 1.775 moedas ganhas e 714 gastas. A sobra mantém liberdade para consumíveis e escolhas de peças sem tornar a forja gratuita.
-- A diferença simulada entre o início e a conclusão é de nível 1 para 9; a amostra padrão termina com espada de ferro +3. Esse crescimento combina níveis, equipamento e compras, em vez de depender de uma única curva exponencial.
+## Economia e drops
 
-## Qualidade visual e de interface
+O loot continua individual e usa as tabelas já existentes: minério e consumível no início, aço/essência e equipamento nas faixas seguintes, cristal raro nas elites/chefe. A coorte padrão encontrou em média 14,63 equipamentos e 97,43 materiais ao concluir os objetivos; esses números são altos o bastante para exigir observação de inventário cheio e consumo na forja no próximo ciclo.
 
-O ataque básico mantém os 0,32 s definidos para o combate, mas agora possui três fases visuais: antecipação com a empunhadura elevada, corte descendente e recuperação. A mão é desenhada no mesmo sistema de transformação da espada, e um antebraço conecta ombro e empunhadura. Isso elimina o efeito de arma flutuante e reduz cruzamentos do braço com o tronco nas quatro direções.
+Não foram implementados sets completos, fragmentos garantidos, desmontagem, crafting ou falha de forja. A estrutura de recompensa permanece extensível, mas nenhuma probabilidade futura foi inventada sem simulação.
 
-Goblins com arma corpo a corpo passam a assumir a pose inicial do golpe durante a sinalização. Antes, a arma podia saltar da pose neutra diretamente para o arco de ataque. Escala corporal e pontos de ancoragem continuam constantes entre idle, caminhada, antecipação e ataque.
+## Desempenho observado
 
-A interface conserva feedback já existente e de baixo ruído: números flutuantes para dano/cura, partículas curtas, toast de ação, resumo de XP/ouro/loot por encontro e efeito próprio da forja. O resumo trata mochila cheia sem esconder recompensas. No layout estreito, botões de fechar agora têm alvo de toque de 44 × 44 px. A revisão estática não encontrou erros ou avisos estruturais; as sugestões informativas restantes são principalmente cores literais do tema existente.
+Smoke test no navegador, com horda e Canvas ativos, mediu 181 quadros em 3,007 s: 60,2 FPS estimados, quadro médio de 16,61 ms e p95 de 17,60 ms. É uma medição local curta, não um benchmark universal. Entidades mortas, partículas e projéteis continuam sendo removidos; resultados recentes ficam limitados a 30 e a proteção de IDs de recompensa a 512 por sessão.
 
-## Auto-farm: avaliação, sem implementação
+## Riscos e próximos sinais
 
-Nenhuma automação foi ligada ao jogo neste ciclo. O repositório já contém funções antigas de estimativa offline em `progression.js` e campos normalizados de save, mas elas não estão conectadas à interface nem ao loop atual.
+- O modelo não representa domínio de esquiva, uso perfeito de habilidades nem tempo ocioso real.
+- A chance atual de loot aplicada a 259 abates pode encher a mochila; medir itens perdidos e frequência de retorno.
+- O lucro de 75,44 ouro/min precisa ser comparado ao consumo real de poções, forja e futuras refinarias.
+- A primeira faixa elite em aproximadamente 39 minutos pode ser longa para jogadores novos, embora esteja coerente com o objetivo de farm prolongado.
+- O Bosque das Cinzas mantém seu fluxo anterior de encontro único; o farm contínuo foi explicitamente limitado à Cave 1 neste pacote.
 
-Opções para um ciclo futuro:
-
-1. **Repetição de andar concluído com presença do jogador.** Mantém o combate visível e reduz deslocamento. Risco moderado de transformar o melhor andar em única atividade ótima.
-2. **Expedição offline limitada por bilhetes/tempo.** Ajuda jogadores com sessões curtas. Exige snapshot transacional, limites de inventário e recompensas abaixo do combate manual para não invalidá-lo.
-3. **Conclusão instantânea de conteúdo dominado.** É a opção mais previsível para balancear, mas deve liberar somente após prova clara de domínio e ter teto diário ou custo real de oportunidade.
-4. **Combate totalmente automático em tempo real.** Tem o maior custo de IA/interface e o maior risco de remover esquiva, habilidade e leitura de sinais — justamente o núcleo atual.
-
-Recomendação: não ativar auto-farm antes de obter telemetria manual sobre abandono, repetição voluntária de andares, consumo de poções e tempo parado na vila. Se necessário, testar primeiro a conclusão limitada de andares já dominados, com rendimento inferior ao manual.
-
-## Verificações e próximos sinais
-
-Os testes automatizados cobrem determinismo, variação entre sementes, metas da coorte padrão, preços iniciais, monotonicidade da forja, save/migrações, loot, regiões, combate derivado, inventário, habilidades e operações idempotentes.
-
-No próximo ciclo, medir com jogadores reais:
-
-- tempo ativo separado de menus e inatividade;
-- causa de morte e dano recebido por arquétipo;
-- andar de abandono e quantidade de tentativas do chefe;
-- tempo até equipar/vender/forjar e itens perdidos por mochila cheia;
-- uso de esquiva e habilidades por acerto efetivo;
-- diferença entre usuários de teclado e toque.
-
-Esses dados devem recalibrar as hipóteses; não devem ser usados para acelerar automaticamente todo jogador até as medianas simuladas.
+Próximo ciclo recomendado: telemetria local opcional de duração ativa, dano por arquétipo, abandono por andar, poções, loot perdido e tempo de retorno. Só depois disso devem ser definidos sets do Rei Goblin, fragmentos contra azar e reciclagem de duplicatas.

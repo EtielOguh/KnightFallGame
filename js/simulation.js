@@ -1,5 +1,8 @@
 import { GAME_CONFIG, ITEMS } from "./data.js";
-import { createEncounterSpec, getRegionConfig, grantEncounterRewards } from "./dungeon.js";
+import {
+  createEncounterSpec, createWavePlan, getFloorFarmConfig, getFloorUnlockTarget,
+  getRegionConfig, grantEncounterRewards, recordFloorKill
+} from "./dungeon.js";
 import { enhanceEquipment, purchaseEquipment } from "./forge.js";
 import {
   addInventoryItem, calculateItemStats, calculateStats, canEquipItem, equipItem,
@@ -11,15 +14,15 @@ import { createInitialState } from "./state.js";
 export const SIMULATION_PROFILES = Object.freeze({
   standard: Object.freeze({
     label: "Jogador padrão", hitRate: .78, attackCadence: .72, dodgeRate: .58,
-    explorationSeconds: 68, villageEvery: 5, villageSeconds: 45, forgeEvery: 8
+    explorationSeconds: 38, villageEvery: 4, villageSeconds: 45, forgeEvery: 45
   }),
   skilled: Object.freeze({
     label: "Jogador experiente", hitRate: .9, attackCadence: .54, dodgeRate: .78,
-    explorationSeconds: 42, villageEvery: 6, villageSeconds: 34, forgeEvery: 7
+    explorationSeconds: 18, villageEvery: 5, villageSeconds: 34, forgeEvery: 40
   }),
   cautious: Object.freeze({
     label: "Jogador cauteloso", hitRate: .68, attackCadence: .9, dodgeRate: .44,
-    explorationSeconds: 86, villageEvery: 4, villageSeconds: 58, forgeEvery: 8
+    explorationSeconds: 38, villageEvery: 3, villageSeconds: 58, forgeEvery: 50
   })
 });
 
@@ -28,7 +31,9 @@ export const PROGRESSION_HYPOTHESES = Object.freeze({
   firstLevelOrUpgrade: [180, 420],
   firstEquipmentChange: [420, 720],
   firstForge: [720, 1200],
-  firstElite: [1200, 1800]
+  // Com 122–151 abates até a faixa avançada, 35–50 min é a hipótese inicial
+  // compatível com o novo objetivo de farm prolongado.
+  firstElite: [2100, 3000]
 });
 
 export function createSeededRandom(seed = 1) {
@@ -55,70 +60,95 @@ export function simulateProgression(options = {}) {
   const initialStats = calculateStats(player);
   const initialWeaponUid = player.equipment.weapon;
   const metrics = {
-    seed, profile: profileId, regionId, elapsedSeconds: 0, fights: 0, victories: 0, deaths: 0,
+    seed, profile: profileId, regionId, elapsedSeconds: 0, fights: 0, victories: 0, waves: 0, deaths: 0,
     goldEarned: 0, goldSpent: 0, materialsFound: {}, equipmentFound: {}, improvements: [],
-    timeToKill: [], levelUps: [], potionsUsed: 0, bossAttempts: 0, boss: null,
+    timeToKill: [], levelUps: [], potionsUsed: 0, killsByFloor: {}, unlockSeconds: {}, bossAttempts: 0, boss: null,
     milestones: { firstReward: null, firstLevelOrUpgrade: null, firstEquipmentChange: null, firstForge: null, firstElite: null }
   };
   let floor = 1;
   let retries = 0;
-  const maxFights = Math.max(config.totalFloors, Math.floor(options.maxFights || config.totalFloors * 3));
+  const requiredVictories = Array.from({ length: config.totalFloors }, (_, index) => getFloorUnlockTarget(index + 1, config)).reduce((sum, amount) => sum + amount, 0);
+  const maxFights = Math.max(requiredVictories, Math.floor(options.maxFights || requiredVictories * 1.8));
 
   while (floor <= config.totalFloors && metrics.fights < maxFights) {
-    const spec = createEncounterSpec(floor, config);
-    if (spec.archetype === "elite" && metrics.milestones.firstElite == null) metrics.milestones.firstElite = round(metrics.elapsedSeconds);
-    if (spec.boss) metrics.bossAttempts += 1;
-    metrics.fights += 1;
+    const targetKills = getFloorUnlockTarget(floor, config);
+    let floorKills = 0;
+    let wave = [];
+    while (floorKills < targetKills && metrics.fights < maxFights) {
+      if (!wave.length) {
+        wave = createWavePlan(floor, config, random);
+        metrics.waves += 1;
+      }
+      const roleId = wave.shift();
+      const spec = createEncounterSpec(floor, config, roleId);
+      if ((roleId === "elite" || spec.archetype === "elite") && metrics.milestones.firstElite == null) metrics.milestones.firstElite = round(metrics.elapsedSeconds);
+      if (spec.boss) metrics.bossAttempts += 1;
+      metrics.fights += 1;
 
-    const combat = estimateManualCombat(player, spec, profile, random);
-    metrics.timeToKill.push({ floor, archetype: spec.archetype, seconds: combat.killSeconds });
-    metrics.elapsedSeconds += combat.killSeconds;
-    player.hp -= combat.damageTaken;
-    useEmergencyPotions(player, metrics);
+      const pressure = Math.min(getFloorFarmConfig(floor, config).maxActive, wave.length + 1);
+      const combat = estimateManualCombat(player, spec, profile, random, pressure);
+      metrics.timeToKill.push({ floor, archetype: spec.archetype, roleId, seconds: combat.killSeconds });
+      metrics.elapsedSeconds += combat.killSeconds;
+      player.hp -= combat.damageTaken;
+      useEmergencyPotions(player, metrics);
 
-    if (player.hp <= 0) {
-      metrics.deaths += 1;
-      const loss = Math.max(GAME_CONFIG.economy.defeatMinimumCoinLoss, Math.floor(player.coins * GAME_CONFIG.economy.defeatCoinLossRatio));
-      player.coins = Math.max(0, player.coins - loss);
-      metrics.goldSpent += loss;
-      metrics.elapsedSeconds += 48;
-      player.hp = calculateStats(player).maxHp;
-      retries += 1;
-      if (retries >= 3) break;
-      continue;
+      if (player.hp <= 0) {
+        metrics.deaths += 1;
+        const loss = Math.min(player.coins, Math.max(GAME_CONFIG.economy.defeatMinimumCoinLoss, Math.floor(player.coins * GAME_CONFIG.economy.defeatCoinLossRatio)));
+        player.coins -= loss;
+        metrics.goldSpent += loss;
+        metrics.elapsedSeconds += 48;
+        player.hp = calculateStats(player).maxHp;
+        retries += 1;
+        wave = [];
+        if (retries >= 5) break;
+        continue;
+      }
+
+      retries = 0;
+      metrics.victories += 1;
+      floorKills += 1;
+      metrics.killsByFloor[floor] = floorKills;
+      player.progression.kills += 1;
+      const reward = grantEncounterRewards(progress, spec, random);
+      const bonus = reward.firstVictory || { xp: 0, coins: 0, items: [] };
+      const coins = reward.coins + bonus.coins;
+      const xp = reward.xp + bonus.xp;
+      player.coins += coins;
+      metrics.goldEarned += coins;
+      if (metrics.milestones.firstReward == null) metrics.milestones.firstReward = round(metrics.elapsedSeconds);
+
+      const levelResult = grantPlayerExperience(player, xp);
+      if (levelResult.levels) {
+        const levelEvent = { at: round(metrics.elapsedSeconds), fights: metrics.fights, level: player.level };
+        metrics.levelUps.push(levelEvent);
+        metrics.improvements.push({ kind: "level", ...levelEvent });
+        if (metrics.milestones.firstLevelOrUpgrade == null) metrics.milestones.firstLevelOrUpgrade = round(metrics.elapsedSeconds);
+      }
+
+      collectDrops(player, [...reward.loot, ...bonus.items], metrics);
+      recordFloorKill(progress, floor, config, { boss: spec.boss });
+      if (spec.boss) {
+        metrics.boss = {
+          floor, killSeconds: combat.killSeconds, damageTaken: combat.damageTaken,
+          maxHp: calculateStats(player).maxHp, dangerRatio: round(combat.damageTaken / Math.max(1, calculateStats(player).maxHp), 3),
+          attempts: metrics.bossAttempts
+        };
+      }
+      if (!wave.length && player.hp / Math.max(1, calculateStats(player).maxHp) < .42) {
+        metrics.elapsedSeconds += 24;
+        const restCost = Math.min(player.coins, GAME_CONFIG.economy.restPrice);
+        player.coins -= restCost;
+        metrics.goldSpent += restCost;
+        player.hp = calculateStats(player).maxHp;
+      }
     }
-
-    retries = 0;
-    metrics.victories += 1;
-    player.progression.kills += 1;
-    const reward = grantEncounterRewards(progress, spec, random);
-    const bonus = reward.firstVictory || { xp: 0, coins: 0, items: [] };
-    const coins = reward.coins + bonus.coins;
-    const xp = reward.xp + bonus.xp;
-    player.coins += coins;
-    metrics.goldEarned += coins;
-    if (metrics.milestones.firstReward == null) metrics.milestones.firstReward = round(metrics.elapsedSeconds);
-
-    const levelResult = grantPlayerExperience(player, xp);
-    if (levelResult.levels) {
-      const levelEvent = { at: round(metrics.elapsedSeconds), fights: metrics.fights, level: player.level };
-      metrics.levelUps.push(levelEvent);
-      metrics.improvements.push({ kind: "level", ...levelEvent });
-      if (metrics.milestones.firstLevelOrUpgrade == null) metrics.milestones.firstLevelOrUpgrade = round(metrics.elapsedSeconds);
-    }
-
-    collectDrops(player, [...reward.loot, ...bonus.items], metrics);
-    if (spec.boss) {
-      metrics.boss = {
-        floor, killSeconds: combat.killSeconds, damageTaken: combat.damageTaken,
-        maxHp: calculateStats(player).maxHp, dangerRatio: round(combat.damageTaken / Math.max(1, calculateStats(player).maxHp), 3),
-        attempts: metrics.bossAttempts
-      };
-    }
+    if (floorKills < targetKills) break;
+    metrics.unlockSeconds[floor] = round(metrics.elapsedSeconds);
     floor += 1;
     metrics.elapsedSeconds += profile.explorationSeconds * (.9 + random() * .2);
 
-    if (metrics.victories % profile.villageEvery === 0 || floor > config.totalFloors) {
+    if ((floor - 1) % profile.villageEvery === 0 || floor > config.totalFloors) {
       metrics.elapsedSeconds += profile.villageSeconds;
       visitVillage(player, metrics, profile, initialWeaponUid);
       player.hp = calculateStats(player).maxHp;
@@ -143,6 +173,7 @@ export function simulateProgression(options = {}) {
     statGrowth: Object.fromEntries(Object.keys(initialStats).map(key => [key, round(finalStats[key] - initialStats[key], 2)])),
     weapon: weapon ? { definitionId: weapon.definitionId, enhancementLevel: weapon.enhancementLevel, stats: calculateItemStats(weapon) } : null,
     meanKillSeconds: round(average(metrics.timeToKill.map(entry => entry.seconds)), 2),
+    goldPerMinute: round(metrics.goldEarned / Math.max(1, metrics.elapsedSeconds / 60), 2),
     milestoneAssessment
   };
 }
@@ -159,6 +190,7 @@ export function simulateCohort(options = {}) {
     meanKillSeconds: round(average(results.map(result => result.meanKillSeconds)), 2),
     meanGoldEarned: round(average(results.map(result => result.goldEarned)), 2),
     meanGoldSpent: round(average(results.map(result => result.goldSpent)), 2),
+    meanGoldPerMinute: round(average(results.map(result => result.goldPerMinute)), 2),
     meanDeaths: round(average(results.map(result => result.deaths)), 2),
     meanFights: round(average(results.map(result => result.fights)), 2),
     medianFightsToFirstLevel: median(results.map(result => result.levelUps[0]?.fights).filter(Number.isFinite)),
@@ -177,22 +209,24 @@ export function simulateCohort(options = {}) {
   };
 }
 
-function estimateManualCombat(player, spec, profile, random) {
+function estimateManualCombat(player, spec, profile, random, pressure = 1) {
   const stats = calculateStats(player);
   const variance = average(GAME_CONFIG.combat.playerDamageVariance);
   const critFactor = 1 + stats.crit / 100 * .5;
   const averageDamage = Math.max(1, stats.attack * variance * critFactor);
   const hits = Math.max(1, Math.ceil(spec.hp / averageDamage));
   const approach = ({ common: 5, warrior: 7, archer: 12, elite: 10, boss: 14 })[spec.archetype] || 7;
-  const killSeconds = (approach + hits * profile.attackCadence / profile.hitRate) * (.92 + random() * .16);
+  const hordeEfficiency = 1 + Math.max(0, pressure - 1) * .18;
+  const killSeconds = (approach + hits * profile.attackCadence / profile.hitRate) * (.92 + random() * .16) / hordeEfficiency;
   const enemyCycle = Math.max(.55, spec.ai.telegraph + spec.ai.attackDuration + spec.ai.recovery);
-  const attempts = Math.max(spec.boss ? 2 : 0, Math.floor(killSeconds / enemyCycle));
+  const exposure = spec.boss ? .82 : spec.archetype === "elite" ? .62 : .52;
+  const attempts = Math.max(spec.boss ? 2 : 0, Math.floor(killSeconds / enemyCycle * exposure));
   const avoidChance = Math.min(.94, profile.dodgeRate + Math.min(.14, spec.ai.telegraph * .12));
   let landed = 0;
   for (let index = 0; index < attempts; index += 1) if (random() > avoidChance) landed += 1;
   const patternFactor = spec.boss ? 1.22 : spec.archetype === "elite" ? 1.14 : 1;
   const damagePerHit = Math.max(GAME_CONFIG.combat.minimumDamageTaken, spec.attack * patternFactor - stats.armor);
-  return { killSeconds: round(killSeconds, 2), damageTaken: round(landed * damagePerHit, 2), hits, landed };
+  return { killSeconds: round(killSeconds, 2), damageTaken: round(landed * damagePerHit * (1 + Math.max(0, pressure - 1) * .14), 2), hits, landed };
 }
 
 function collectDrops(player, drops, metrics) {
@@ -226,7 +260,7 @@ function visitVillage(player, metrics, profile, initialWeaponUid) {
   buyBestMerchantUpgrade(player, metrics);
   equipBestOwnedItems(player, metrics, initialWeaponUid);
   if (metrics.victories >= profile.forgeEvery) reinforceWeapon(player, metrics);
-  if (player.coins >= attackUpgradePrice(player)) {
+  if (player.progression.upgrades.attack < GAME_CONFIG.economy.attackUpgrade.maxPurchases && player.coins >= attackUpgradePrice(player)) {
     const cost = attackUpgradePrice(player);
     player.coins -= cost;
     player.baseStats.attack += GAME_CONFIG.economy.attackUpgrade.amount;
@@ -279,6 +313,7 @@ function reinforceWeapon(player, metrics) {
 
 function attackUpgradePrice(player) {
   const config = GAME_CONFIG.economy.attackUpgrade;
+  if (player.progression.upgrades.attack >= config.maxPurchases) return Infinity;
   return config.basePrice + player.progression.upgrades.attack * config.priceStep;
 }
 

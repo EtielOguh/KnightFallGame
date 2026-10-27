@@ -8,7 +8,7 @@ const profiles = args.profile ? [args.profile] : ["standard", "skilled", "cautio
 const report = {
   generatedAt: new Date().toISOString(),
   disclaimer: "Modelo determinístico de balanceamento; não representa telemetria nem comportamento real de jogadores.",
-  assumptions: "Combate manual aproximado por precisão, cadência, esquiva, exploração e visitas periódicas à vila configuradas por perfil.",
+  assumptions: "Farm manual aproximado por precisão, cadência, esquiva, ondas, metas de abate, exploração, retornos táticos e visitas à vila configuradas por perfil.",
   seed, runs, regionId,
   sample: simulateProgression({ seed, profile: profiles[0], regionId }),
   cohorts: Object.fromEntries(profiles.map(profile => [profile, simulateCohort({ seed, runs, profile, regionId })]))

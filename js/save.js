@@ -111,7 +111,27 @@ function migrateVersionedState(state, version) {
       }
     };
   }
+  if (version < 7) migrated = migrateToV7(migrated);
   return normalizeGameState(migrated);
+}
+
+function migrateToV7(state) {
+  const world = state.world && typeof state.world === "object" ? state.world : {};
+  const regionProgress = world.regionProgress && typeof world.regionProgress === "object" ? world.regionProgress : {};
+  const migratedRegions = Object.fromEntries(Object.entries(regionProgress).map(([regionId, progress]) => {
+    const source = progress && typeof progress === "object" ? progress : {};
+    return [regionId, {
+      ...source,
+      selectedFloor: source.selectedFloor ?? source.currentExpeditionFloor ?? source.highestUnlockedFloor ?? 1,
+      floorKills: source.floorKills || {},
+      floorObjectivesCompleted: source.floorObjectivesCompleted || {}
+    }];
+  }));
+  return {
+    ...state,
+    schemaVersion: 7,
+    world: { ...world, regionProgress: migratedRegions }
+  };
 }
 
 function migrateVisualV1(state) {

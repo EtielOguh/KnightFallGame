@@ -164,6 +164,8 @@ kbd { display: inline-grid; min-width: 24px; min-height: 22px; padding: 2px 6px;
 .region-card dl div { padding: 7px; background: #0f130e; }
 .region-card dt { color: #858b7b; font: .48rem/1 ui-sans-serif, system-ui, sans-serif; }
 .region-card dd { margin: 4px 0 0; color: #ddd6c1; font-size: .58rem; }
+.region-floor-select { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: -2px 0 9px; color: #858b7b; font: 800 .48rem/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: .08em; }
+.region-floor-select select { min-width: 72px; padding: 6px 8px; border: 1px solid #4b533f; background: #0f130e; color: #ddd6c1; font: 700 .58rem/1 ui-sans-serif, system-ui, sans-serif; }
 .region-card button { width: 100%; padding: 8px; border: 1px solid #7d6d45; background: #302b1d; color: #ead897; cursor: pointer; font-size: .59rem; }
 .region-card button:disabled { border-color: #3e4339; background: #20231d; color: #73776b; cursor: not-allowed; }
 

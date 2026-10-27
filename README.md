@@ -29,7 +29,7 @@ Não há dependências de produção nem processo de build.
 - `M`: abrir o mercador enquanto estiver na clareira
 - `Esc`: fechar painéis
 
-Na Clareira do Corvo, fale com Bram para comprar poções, recuperar vida e melhorar permanentemente ataque e armadura. O mapa fica junto à antiga entrada da caverna. A Caverna Sombria possui 20 andares e termina no Rei Goblin; derrotá-lo libera o Bosque das Cinzas, uma segunda região de 10 estágios com feras, cultistas, entes e o Cervo-Rei Putrificado. Regiões desbloqueadas podem ser revisitadas e mantêm progresso independente.
+Na Clareira do Corvo, fale com Bram para comprar poções, recuperar vida e melhorar permanentemente ataque e armadura. Esses treinos possuem limite de oito compras por atributo; saves antigos acima do limite conservam todo o poder adquirido. O mapa permite escolher qualquer andar já desbloqueado. Na Caverna Sombria, ondas reaparecem continuamente, abates liberam o próximo andar sem forçar o avanço e o Rei Goblin é repetível. Derrotá-lo libera o Bosque das Cinzas.
 
 ## Sistemas
 
@@ -40,6 +40,8 @@ Na Clareira do Corvo, fale com Bram para comprar poções, recuperar vida e melh
 - Habilidades ativas com vigor, cooldown, fases sincronizadas e efeitos procedurais
 - Pontos de habilidade, passivas de guerreiro e maestria de espadas por acertos efetivos
 - Regiões com desbloqueio configurável, progresso independente e retorno seguro à vila
+- Farm contínuo na Caverna Sombria, ondas de 2–4 ameaças, metas persistentes e escolha manual de andar
+- IDs, mortes, recompensas e projéteis independentes por inimigo, com limites de entidades configuráveis
 - Bosque das Cinzas completo com 10 estágios, identidade visual, obstáculos e inimigos próprios
 - Quatro arquétipos de goblin com IA por estados, navegação A*, projéteis e desvio de obstáculos
 - Rei Goblin procedural com três padrões, fase 2, barra de chefe e prêmio único de primeira vitória
@@ -60,6 +62,7 @@ style.css           direção visual e layout responsivo
 js/game.js          loop, input, arte procedural, combate e IA
 js/data.js          catálogos e configuração central de balanceamento
 js/dungeon.js       regiões, estágios, desbloqueios e recompensas de encontro
+js/farm.js          runtime de ondas, respawn, IDs e projéteis por proprietário
 js/forge.js         reforço, custos, compra e venda atômicos
 js/skills.js        habilidades, recursos, passivas e maestria
 js/state.js         estado raiz, normalização e validação

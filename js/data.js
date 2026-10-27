@@ -266,7 +266,7 @@ export const SKILLS = deepFreeze({
 export const GAME_CONFIG = deepFreeze({
   save: {
     gameId: "KnightFall",
-    schemaVersion: 6,
+    schemaVersion: 7,
     primaryKey: "knightfall.save",
     legacyKeys: ["knightfall.visual.v1", "ecosDoAbismo.save"]
   },
@@ -352,13 +352,40 @@ export const GAME_CONFIG = deepFreeze({
     id: "caverna_sombria",
     name: "Caverna Sombria",
     totalFloors: 20,
+    farm: {
+      continuous: true,
+      // Índice 0 representa o andar 1. O chefe usa vitórias, não abates comuns.
+      unlockKills: [5, 6, 7, 8, 8, 9, 10, 11, 12, 12, 14, 15, 16, 18, 18, 20, 21, 23, 25, 1],
+      spawnDelay: .48,
+      waveBreak: 1.8,
+      bossRespawnDelay: 4.5,
+      projectileCap: 24,
+      maxPathfindsPerFrame: 2,
+      navigationRepath: [.42, .68],
+      separationRadius: 31,
+      separationStrength: .48,
+      roles: {
+        common: { threat: 1, hp: 1, attack: 1, speed: 1, reward: 1, archetype: "common", ai: { preferredDistance: 49, attackRange: 58, telegraph: .28, attackDuration: .3, recovery: .62, pattern: "slash", patterns: null } },
+        swift: { threat: .9, hp: .72, attack: .82, speed: 1.24, reward: .72, archetype: "common", ai: { preferredDistance: 46, attackRange: 56, telegraph: .24, attackDuration: .26, recovery: .52, pattern: "slash", patterns: null } },
+        tank: { threat: 1.65, hp: 1.55, attack: .92, speed: .76, reward: 1.28, archetype: "warrior", ai: { preferredDistance: 54, attackRange: 69, pattern: "cleave", patterns: null, telegraph: .5, attackDuration: .36, recovery: .82 } },
+        ranged: { threat: 1.5, hp: .82, attack: .9, speed: .94, reward: 1.15, archetype: "archer", ai: { preferredDistance: 205, retreatDistance: 125, attackRange: 310, telegraph: .62, attackDuration: .18, recovery: .86, pattern: "arrow" } },
+        elite: { threat: 2.5, hp: 1.25, attack: 1.15, speed: .94, reward: 1.45, archetype: "elite", ai: { preferredDistance: 62, attackRange: 78, telegraph: .72, attackDuration: .42, recovery: .88, patterns: ["heavy", "charge"] } }
+      },
+      bands: [
+        { minFloor: 1, maxFloor: 4, maxActive: 2, waveSize: [2, 3], threatBudget: [2, 2.8], roles: { common: 4, swift: 1 } },
+        { minFloor: 5, maxFloor: 9, maxActive: 3, waveSize: [2, 3], threatBudget: [2.5, 3.8], roles: { common: 3, swift: 1, tank: 1 } },
+        { minFloor: 10, maxFloor: 14, maxActive: 3, waveSize: [3, 4], threatBudget: [3.5, 4.8], roles: { common: 2, swift: 1, ranged: 2, tank: 1 } },
+        { minFloor: 15, maxFloor: 19, maxActive: 4, waveSize: [3, 4], threatBudget: [4.2, 6], roles: { common: 2, ranged: 2, tank: 1, elite: 1 } },
+        { minFloor: 20, maxFloor: 20, maxActive: 1, waveSize: [1, 1], threatBudget: [1, 1], roles: { boss: 1 } }
+      ]
+    },
     tiers: [
       {
         id: "common", label: "Covil Goblin", minFloor: 1, maxFloor: 5, archetype: "common",
         names: ["Goblin Saqueador", "Goblin da Pedra", "Goblin Lâmina-Torta"],
         stats: { hpBase: 42, hpPerFloor: 7, attackBase: 8, attackPerFloor: 1.1, speed: 62 },
         ai: { preferredDistance: 49, attackRange: 58, telegraph: .28, attackDuration: .3, recovery: .62, pattern: "slash" },
-        rewards: { xpBase: 24, xpPerFloor: 7, coinsBase: 8, coinsPerFloor: 2, coinVariance: 7, multiplier: 1 },
+        rewards: { xpBase: 4, xpPerFloor: 1, coinsBase: 2, coinsPerFloor: .55, coinVariance: 3, multiplier: 1 },
         loot: [
           { definitionId: "pocao_menor", chance: .18 }, { definitionId: "espada_curta", chance: .08 },
           { definitionId: "armadura_couro", chance: .07 }, { definitionId: "botas_couro", chance: .06 },
@@ -371,7 +398,7 @@ export const GAME_CONFIG = deepFreeze({
         names: ["Goblin Guerreiro", "Quebra-Escudos", "Lâmina Rubra"],
         stats: { hpBase: 88, hpPerFloor: 9, attackBase: 15, attackPerFloor: 1.25, speed: 67 },
         ai: { preferredDistance: 54, attackRange: 69, telegraph: .46, attackDuration: .36, recovery: .78, pattern: "cleave" },
-        rewards: { xpBase: 50, xpPerFloor: 8, coinsBase: 15, coinsPerFloor: 2.4, coinVariance: 10, multiplier: 1.15 },
+        rewards: { xpBase: 5, xpPerFloor: 1, coinsBase: 3, coinsPerFloor: .7, coinVariance: 4, multiplier: 1 },
         loot: [
           { definitionId: "espada_ferro", chance: .08 }, { definitionId: "capacete_ferro", chance: .1 },
           { definitionId: "armadura_couro", chance: .11 }, { definitionId: "fragmento_ferro", chance: .42 },
@@ -384,7 +411,7 @@ export const GAME_CONFIG = deepFreeze({
         names: ["Goblin Arqueiro", "Olho-Amarelo", "Batedor da Caverna"],
         stats: { hpBase: 102, hpPerFloor: 8, attackBase: 17, attackPerFloor: 1.15, speed: 73 },
         ai: { preferredDistance: 205, retreatDistance: 125, attackRange: 310, telegraph: .62, attackDuration: .18, recovery: .86, pattern: "arrow" },
-        rewards: { xpBase: 78, xpPerFloor: 9, coinsBase: 23, coinsPerFloor: 2.8, coinVariance: 13, multiplier: 1.25 },
+        rewards: { xpBase: 6, xpPerFloor: 1.05, coinsBase: 4, coinsPerFloor: .8, coinVariance: 5, multiplier: 1 },
         loot: [
           { definitionId: "amuleto_vigia", chance: .1 }, { definitionId: "anel_vitalidade", chance: .07 },
           { definitionId: "pocao_maior", chance: .12 }, { definitionId: "fragmento_ferro", chance: .2 },
@@ -397,7 +424,7 @@ export const GAME_CONFIG = deepFreeze({
         names: ["Campeão Goblin", "Executor da Coroa", "Guarda Negro"],
         stats: { hpBase: 168, hpPerFloor: 17, attackBase: 23, attackPerFloor: 1.8, speed: 77 },
         ai: { preferredDistance: 62, attackRange: 78, telegraph: .72, attackDuration: .42, recovery: .88, patterns: ["heavy", "charge"] },
-        rewards: { xpBase: 125, xpPerFloor: 12, coinsBase: 38, coinsPerFloor: 4, coinVariance: 18, multiplier: 1.55 },
+        rewards: { xpBase: 9, xpPerFloor: 1.25, coinsBase: 6, coinsPerFloor: 1, coinVariance: 7, multiplier: 1 },
         loot: [
           { definitionId: "espada_ferro", chance: .16 }, { definitionId: "anel_vitalidade", chance: .12 },
           { definitionId: "pocao_maior", chance: .2 }, { definitionId: "fragmento_aco", chance: .44 },
@@ -481,8 +508,8 @@ export const GAME_CONFIG = deepFreeze({
   economy: {
     potionPrice: 15,
     restPrice: 8,
-    attackUpgrade: { basePrice: 65, priceStep: 28, amount: 3 },
-    armorUpgrade: { basePrice: 70, priceStep: 32, amount: 2 },
+    attackUpgrade: { basePrice: 65, priceStep: 28, amount: 3, maxPurchases: 8 },
+    armorUpgrade: { basePrice: 70, priceStep: 32, amount: 2, maxPurchases: 8 },
     defeatCoinLossRatio: .2,
     defeatMinimumCoinLoss: 5,
     merchantEquipment: ["espada_curta", "capacete_ferro", "botas_couro"],

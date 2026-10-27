@@ -52,6 +52,17 @@ export function normalizeGameState(raw) {
       kills: raw.player.progression?.kills ?? raw.kills ?? 0
     }
   });
+  const legacyBossesDefeated = numberRecord(rawWorld.bossesDefeated);
+  const regionProgress = createRegionProgressMap(rawWorld.regionProgress, rawWorld.caveProgress, player.progression.kills);
+  for (const [regionId, definition] of Object.entries(GAME_CONFIG.regions)) {
+    if (!definition.bossId || !regionProgress[regionId]) continue;
+    regionProgress[regionId].bossVictories = Math.max(regionProgress[regionId].bossVictories, Math.floor(legacyBossesDefeated[definition.bossId] || 0));
+    if (regionProgress[regionId].bossVictories > 0) {
+      const bossFloor = getRegionConfig(regionId).totalFloors;
+      regionProgress[regionId].floorObjectivesCompleted[bossFloor] = true;
+      regionProgress[regionId].floorKills[bossFloor] = Math.max(regionProgress[regionId].floorKills[bossFloor] || 0, regionProgress[regionId].bossVictories);
+    }
+  }
   const state = {
     schemaVersion: STATE_SCHEMA_VERSION,
     player,
@@ -59,9 +70,10 @@ export function normalizeGameState(raw) {
       scene: normalizeScene(rawWorld.scene ?? raw.scene),
       caveVisits: integer(rawWorld.caveVisits, raw.caveVisits ?? 0, 0, 1000000000),
       currentRegionId: GAME_CONFIG.regions[rawWorld.currentRegionId]?.status === "playable" ? rawWorld.currentRegionId : "caverna_sombria",
-      regionProgress: createRegionProgressMap(rawWorld.regionProgress, rawWorld.caveProgress, player.progression.kills),
+      regionProgress,
       currentArea: AREAS[rawWorld.currentArea] ? rawWorld.currentArea : defaults.world.currentArea,
-      bossesDefeated: numberRecord(rawWorld.bossesDefeated),
+      // Campo legado neutralizado: bossVictories por região é a fonte canônica.
+      bossesDefeated: {},
       bossPity: numberRecord(rawWorld.bossPity)
     },
     settings: {
@@ -154,8 +166,11 @@ export function validateGameState(state) {
       let total = 0;
       try { total = getRegionConfig(regionId).totalFloors; } catch { errors.push(`região inválida em progresso: ${regionId}`); continue; }
       if (!progress || !Number.isInteger(progress.highestUnlockedFloor) || progress.highestUnlockedFloor < 1 || progress.highestUnlockedFloor > total) errors.push(`progresso inválido em ${regionId}`);
-      if (progress?.currentExpeditionFloor != null && (progress.currentExpeditionFloor < 1 || progress.currentExpeditionFloor > progress.highestUnlockedFloor)) errors.push(`estágio atual inválido em ${regionId}`);
-      if (progress && (!progress.floorCompletions || !progress.uniqueRewardsClaimed)) errors.push(`recompensas inválidas em ${regionId}`);
+      if (!Number.isInteger(progress?.selectedFloor) || progress.selectedFloor < 1 || progress.selectedFloor > progress.highestUnlockedFloor) errors.push(`andar selecionado inválido em ${regionId}`);
+      if (progress && (!progress.floorKills || !progress.floorObjectivesCompleted || !progress.floorCompletions || !progress.uniqueRewardsClaimed)) errors.push(`progresso ou recompensas inválidos em ${regionId}`);
+      for (const [floor, kills] of Object.entries(progress?.floorKills || {})) {
+        if (!Number.isInteger(Number(floor)) || Number(floor) < 1 || Number(floor) > total || !Number.isInteger(kills) || kills < 0) errors.push(`abates inválidos em ${regionId}`);
+      }
     }
   }
   return { valid: errors.length === 0, errors };
