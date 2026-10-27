@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "project": {
+    "name": "Jogo Novo Knightfall",
+    "productType": "2D browser RPG",
+    "stack": ["HTML", "CSS", "Canvas", "JavaScript"]
+  },
+  "sources": {
+    "tokens": [],
+    "components": [],
+    "assets": [],
+    "instructions": []
+  },
+  "design": {
+    "colorMode": "dark",
+    "colors": {
+      "background": "#0c0e0b",
+      "surface": "#151913",
+      "text": "#ebe5d4",
+      "accent": "#d8b45e",
+      "danger": "#b95043"
+    },
+    "typography": {},
+    "spacing": {},
+    "radius": {},
+    "shadows": {},
+    "motion": {},
+    "density": "compact"
+  },
+  "components": {
+    "installed": [],
+    "preferredPrimitives": [],
+    "patterns": []
+  },
+  "constraints": {
+    "must": [],
+    "avoid": []
+  },
+  "decisions": [
+    "Use a readable dark-fantasy HUD with aged-gold accents around a 16:9 canvas world.",
+    "Keep the game dependency-free and draw the tiled environment and original chibi pixel characters entirely in Canvas.",
+    "Use crisp handheld-era pixel geometry, four-direction character silhouettes, and square UI framing without copying third-party game assets.",
+    "Keep core actions keyboard-first and provide equivalent touch controls on small screens.",
+    "Use a compact inventory dialog with equipped slots, a dense item grid, and a persistent comparison/detail pane; collapse it to one scrollable column on phones.",
+    "Represent rarity with restrained item borders and labels while keeping procedural Canvas icons and worn layers consistent with the existing pixel geometry.",
+    "Use a two-pane forge dialog with a resource ledger and selectable equipment list beside a Canvas workbench; collapse it to a single scrollable column on narrow screens.",
+    "Present warrior skills as compact progression cards beside a persistent sword-mastery panel, with a three-slot Canvas hotbar separated from movement and interaction controls.",
+    "Present world travel as compact dark-fantasy region cards that clearly separate playable, locked, and planned destinations while preserving the Canvas game as the visual focus."
+  ],
+  "evidence": [],
+  "generatedAt": "2026-10-24T03:13:16.190Z"
+}

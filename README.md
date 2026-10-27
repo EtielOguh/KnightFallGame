@@ -1,74 +1,112 @@
-# KnightFall
+# KnightFall — RPG 2D
 
-RPG de fantasia sombria para navegador, feito somente com HTML, CSS e JavaScript.
+RPG de fantasia sombria para navegador, feito com HTML, CSS, Canvas e JavaScript puro.
 
 ## Executar
 
-Como o projeto usa módulos JavaScript, abra um servidor local na pasta do projeto:
+Como o projeto usa módulos JavaScript, inicie um servidor local na pasta do projeto:
 
 ```sh
 python3 -m http.server 8000
 ```
 
-Depois acesse `http://localhost:8000` no navegador.
+Depois acesse `http://localhost:8000`.
 
-Não há dependências, instalação ou processo de build.
+Não há dependências de produção nem processo de build.
+
+## Como jogar
+
+- `WASD` ou setas: movimentar o herói
+- `Espaço`: atacar
+- `Shift`: esquivar na direção do movimento ou da orientação atual
+- `E`: interagir com o mercador, entrar na caverna ou sair dela
+- `Q`: usar uma poção de cura
+- `I`: abrir ou fechar inventário e equipamentos
+- `F`: abrir a forja enquanto estiver na vila
+- `K`: abrir habilidades e maestria
+- `R`: abrir o mapa de regiões na vila
+- `1`, `2` e `3`: Golpe Poderoso, Corte Giratório e Investida
+- `M`: abrir o mercador enquanto estiver na clareira
+- `Esc`: fechar painéis
+
+Na Clareira do Corvo, fale com Bram para comprar poções, recuperar vida e melhorar permanentemente ataque e armadura. O mapa fica junto à antiga entrada da caverna. A Caverna Sombria possui 20 andares e termina no Rei Goblin; derrotá-lo libera o Bosque das Cinzas, uma segunda região de 10 estágios com feras, cultistas, entes e o Cervo-Rei Putrificado. Regiões desbloqueadas podem ser revisitadas e mantêm progresso independente.
+
+## Sistemas
+
+- Mundo 2D desenhado em Canvas, com vila, mercador, caverna e Bosque das Cinzas
+- Personagens pixelados desenhados e animados inteiramente por código
+- Movimento em oito direções com teclado e controles de toque
+- Combate em tempo real com golpe descendente de espada, esquiva, dano, defesa, invulnerabilidade breve e poções
+- Habilidades ativas com vigor, cooldown, fases sincronizadas e efeitos procedurais
+- Pontos de habilidade, passivas de guerreiro e maestria de espadas por acertos efetivos
+- Regiões com desbloqueio configurável, progresso independente e retorno seguro à vila
+- Bosque das Cinzas completo com 10 estágios, identidade visual, obstáculos e inimigos próprios
+- Quatro arquétipos de goblin com IA por estados, navegação A*, projéteis e desvio de obstáculos
+- Rei Goblin procedural com três padrões, fase 2, barra de chefe e prêmio único de primeira vitória
+- Recompensas em ouro, XP e loot protegidas contra concessão duplicada
+- Forja de +0 a +10 com minério, aço, essência goblin, seiva corrompida, cinza viva e cristal raro
+- Compra e venda de equipamentos usando a moeda e o inventário canônicos
+- Inventário responsivo, comparação, itens novos e seis slots de equipamento
+- Cinco raridades e atributos de equipamento aplicados diretamente ao combate
+- Ícones e camadas vestidas de arma, capacete, peitoral e botas desenhados proceduralmente
+- Persistência automática no `localStorage`
+- Interface responsiva, tela cheia e opção de som
 
 ## Estrutura
 
 ```text
-index.html       estrutura da aplicação
-style.css        apresentação responsiva
-js/game.js       estado central, telas e regras do loop principal
-js/player.js     criação e atributos do personagem
-js/terminal.js   componentes visuais e navegação por teclado
-js/save.js       persistência versionada no localStorage
-js/progression.js constantes e fórmulas de domínio, treino e Auto Farm
+index.html          HUD, painéis e diálogos
+style.css           direção visual e layout responsivo
+js/game.js          loop, input, arte procedural, combate e IA
+js/data.js          catálogos e configuração central de balanceamento
+js/dungeon.js       regiões, estágios, desbloqueios e recompensas de encontro
+js/forge.js         reforço, custos, compra e venda atômicos
+js/skills.js        habilidades, recursos, passivas e maestria
+js/state.js         estado raiz, normalização e validação
+js/player.js        personagem, inventário, equipamentos e atributos
+js/loot.js          rolagem pura e testável das recompensas
+js/progression.js   XP, níveis, domínio e simulações
+js/simulation.js    simulação determinística de progressão e economia
+js/save.js          save versionado e migrações
+js/music.js         áudio procedural
+scripts/            ferramentas de auditoria e balanceamento
+tests/              verificações automatizadas dos sistemas críticos
 ```
 
-O estado da campanha permanece independente do DOM. As telas registram apenas as ações válidas naquele momento, e a camada visual transforma cliques, atalhos e Enter na mesma entrada. O save local serializa o estado inteiro e inclui uma versão para permitir migrações futuras.
+Veja [ARCHITECTURE.md](ARCHITECTURE.md) para o mapa completo, fontes de verdade e regras de extensão.
 
-## Sistemas atuais
+## Testes
 
-- Combate em turnos, energia, críticos, esquiva, vitória, fuga e derrota
-- Seis regiões, com acesso por nível e criaturas próprias
-- Faixas regionais de inimigos: níveis 1–2, 3–5, 6–8, 9–12, 13–16 e 17–20
-- Um chefe em cada região, liberado ao seguir rastros deixados pelos inimigos
-- Drops de set de chefe com chance progressiva após tentativas sem sucesso
-- Experiência, níveis e desbloqueio de habilidades
-- Arsenal ampliado com armas, armaduras, elmos, botas, amuletos, três categorias de poções e materiais
-- Raridades comum, incomum, rara, épica e de chefe
-- Sets de chefe com arma, armadura, elmo, amuleto e botas; cinco peças equipadas ativam um bônus exclusivo
-- Venda de itens, valorização por raridade/evolução e proteção contra venda de equipamento ativo
-- Mochila com 20 espaços base, até +20 por progressão de nível e até +20 por expansões compradas
-- Evolução de equipamentos até `+5` usando moedas e materiais
-- Tema de abertura e música de batalha sintetizados pelo navegador
-- Indicadores visuais animados para ataques, dano e esquiva, sem efeitos sonoros de golpes
-- Opção para salvar e sair ao menu principal, preservando a última região visitada
-- Autosave durante exploração, viagens, equipamentos, evolução e a cada turno de batalha
-- Expedições contínuas com eventos automáticos, encontros, fuga e acesso direto ao chefe
-- Interface visual responsiva com cartões, transições e navegação por setas/Enter
-- Domínio independente para espada, machado, lança, arco, cajado e adaga, até o nível 100
-- Campo de Treinamento com sessões por timestamp e limite offline de 8 horas
-- Auto Attack baseado no intervalo real da arma e nas mesmas regras do ataque manual
-- Auto Farm agregado com estimativas reais, uso de poções, morte, limite da mochila e relatório
+```sh
+npm test
+npm run simulate:balance -- --seed 41021 --runs 250
+```
 
-## Testes rápidos de desenvolvimento
+Os testes usam apenas o executor nativo do Node.js.
+Os resultados da simulação são hipóteses reproduzíveis de balanceamento, não dados reais de jogadores. Veja [BALANCE_REPORT.md](BALANCE_REPORT.md) para metodologia, comparação e avaliação de auto-farm.
 
-Abra o jogo com `?debug=1`, carregue uma campanha e use no console:
+## Atalhos de desenvolvimento
+
+No console do navegador:
 
 ```js
-KnightFallDebug.training(3600, "sword")
-KnightFallDebug.farm(3600, "ruinas_despertar")
-KnightFallDebug.mastery("sword", 50)
+KnightFallDebug.enterCave()
+KnightFallDebug.enterRegion("bosque_cinzas")
+KnightFallDebug.unlockRegion("bosque_cinzas")
+KnightFallDebug.exitCave()
+KnightFallDebug.addCoins(100)
+KnightFallDebug.enemy()
+KnightFallDebug.encounter()
+KnightFallDebug.setFloor(20)
+KnightFallDebug.damageEnemy(100)
+KnightFallDebug.stats()
+KnightFallDebug.openInventory()
+KnightFallDebug.openForge()
+KnightFallDebug.addSkillPoints(5)
+KnightFallDebug.setPlayerLevel(3)
+KnightFallDebug.learnSkill("golpe_poderoso")
+KnightFallDebug.useSkill("golpe_poderoso")
+KnightFallDebug.addForgeResources(50)
+KnightFallDebug.addItem("espada_curta")
+KnightFallDebug.state()
 ```
-
-Recarregue ou conclua a sessão pela interface para gerar o relatório. Os utilitários não são criados sem o parâmetro `?debug=1`.
-
-## Balanceamento da automação
-
-As constantes ficam em `js/progression.js`, no objeto `BALANCE`. Ali podem ser ajustados o limite offline, XP de treino por segundo, eficiência do Auto Farm, eficiência de domínio em combate, nível máximo de domínio, bônus de dano, curvas de XP, atraso entre encontros e taxas de poções/raridades.
-
-Treinamento e Auto Farm não mantêm timers longos. O save guarda `startedAt`; ao retornar, o jogo calcula a diferença entre `Date.now()` e esse timestamp, rejeita valores negativos e limita o resultado a oito horas.
-
-A música começa apenas depois de uma interação do jogador, conforme as regras de reprodução automática dos navegadores.

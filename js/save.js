@@ -1,90 +1,149 @@
-import { BALANCE, WEAPON_TYPES, createWeaponMastery, playerExpRequired } from "./progression.js";
-import { AREAS } from "./data.js";
+import { GAME_CONFIG } from "./data.js";
+import { createSaveSnapshot, normalizeGameState, STATE_SCHEMA_VERSION, validateGameState } from "./state.js";
 
-const SAVE_KEY = "ecosDoAbismo.save";
-const SAVE_VERSION = 7;
+export const SAVE_KEY = GAME_CONFIG.save.primaryKey;
+export const SAVE_VERSION = STATE_SCHEMA_VERSION;
+export const LEGACY_SAVE_KEYS = Object.freeze([...GAME_CONFIG.save.legacyKeys]);
 
-export function saveGame(gameState) {
-  localStorage.setItem(SAVE_KEY, serializeGame(gameState));
+export function saveGame(gameState, options = {}) {
+  const logger = options.logger || console;
+  try {
+    const storage = options.storage || getStorage();
+    const snapshot = createSaveSnapshot(gameState);
+    storage.setItem(SAVE_KEY, serializeGame(snapshot));
+    return true;
+  } catch (error) {
+    logger.error("[KnightFall] Falha ao salvar a partida.", error);
+    return false;
+  }
 }
 
-function serializeGame(gameState) {
+export function loadGame(options = {}) {
+  const logger = options.logger || console;
+  let storage;
+  try {
+    storage = options.storage || getStorage();
+  } catch (error) {
+    logger.error("[KnightFall] Persistência local indisponível.", error);
+    return null;
+  }
+  for (const key of [SAVE_KEY, ...LEGACY_SAVE_KEYS]) {
+    const raw = storage.getItem(key);
+    if (!raw) continue;
+    try {
+      return decodeSave(raw, key);
+    } catch (error) {
+      logger.error(`[KnightFall] Save inválido ignorado em "${key}".`, error);
+    }
+  }
+  return null;
+}
+
+export function hasSave(options = {}) {
+  return loadGame(options) !== null;
+}
+
+export function deleteSave(options = {}) {
+  const logger = options.logger || console;
+  try {
+    const storage = options.storage || getStorage();
+    for (const key of [SAVE_KEY, ...LEGACY_SAVE_KEYS]) storage.removeItem(key);
+    return true;
+  } catch (error) {
+    logger.error("[KnightFall] Falha ao apagar saves.", error);
+    return false;
+  }
+}
+
+export function serializeGame(gameState) {
+  const validation = validateGameState(gameState);
+  if (!validation.valid) throw new TypeError(`Estado recusado pelo save: ${validation.errors.join("; ")}`);
   return JSON.stringify({
-    game: "KnightFall",
+    game: GAME_CONFIG.save.gameId,
     version: SAVE_VERSION,
     savedAt: new Date().toISOString(),
     state: gameState
-  }, null, 2);
+  });
 }
 
-function parseSaveJson(json) {
+export function decodeSave(json, sourceKey = SAVE_KEY) {
   const payload = JSON.parse(json);
-  if (!payload?.state?.player || payload.version > SAVE_VERSION) throw new Error("Arquivo de save inválido ou incompatível.");
-  return migrateState(payload.state);
+  if (!payload || typeof payload !== "object") throw new TypeError("Conteúdo do save inválido.");
+
+  if (sourceKey === SAVE_KEY) {
+    if (payload.game !== GAME_CONFIG.save.gameId || !payload.state) throw new TypeError("Envelope do save inválido.");
+    if (!Number.isInteger(payload.version) || payload.version < 1) throw new TypeError("Versão do save ausente.");
+    if (payload.version > SAVE_VERSION) throw new RangeError("Este save foi criado por uma versão mais nova do jogo.");
+    return migrateVersionedState(payload.state, payload.version);
+  }
+
+  // knightfall.visual.v1 era um objeto de estado sem envelope.
+  if (sourceKey === "knightfall.visual.v1") {
+    if (!payload.player) throw new TypeError("Save visual v1 sem personagem.");
+    return migrateVisualV1(payload);
+  }
+
+  // ecosDoAbismo.save usava envelope próprio e chegou à versão 7.
+  if (sourceKey === "ecosDoAbismo.save") {
+    if (!payload.state?.player) throw new TypeError("Save legado sem personagem.");
+    return migrateLegacyTerminal(payload.state);
+  }
+
+  throw new TypeError("Origem de save desconhecida.");
 }
 
-export function loadGame() {
-  const raw = localStorage.getItem(SAVE_KEY);
-  if (!raw) return null;
-  try {
-    return parseSaveJson(raw);
-  } catch {
-    return null;
+function migrateVersionedState(state, version) {
+  let migrated = state;
+  if (version === 1) return migrateVisualV1(migrated);
+  if (version < 6) {
+    const legacyWorld = migrated.world && typeof migrated.world === "object" ? migrated.world : {};
+    migrated = {
+      ...migrated,
+      world: {
+        ...legacyWorld,
+        currentRegionId: legacyWorld.currentRegionId || "caverna_sombria",
+        regionProgress: legacyWorld.regionProgress && legacyWorld.regionProgress.caverna_sombria
+          ? legacyWorld.regionProgress
+          : {
+              caverna_sombria: legacyWorld.caveProgress || {},
+              bosque_cinzas: {}
+            }
+      }
+    };
   }
+  return normalizeGameState(migrated);
 }
 
-function migrateState(state) {
-  const player = state.player;
-  player.expToNext = playerExpRequired(player.level || 1);
-  player.energy ??= 3;
-  player.maxEnergy ??= 3;
-  player.equipment ??= { weapon: null, armor: null, charm: null };
-  player.equipment.helmet ??= null;
-  player.equipment.boots ??= null;
-  player.bag ??= { purchasedSlots: 0 };
-  player.bag.purchasedSlots ??= 0;
-  const masteryDefaults = createWeaponMastery();
-  player.weaponMastery ??= masteryDefaults;
-  for (const [type, defaults] of Object.entries(masteryDefaults)) {
-    player.weaponMastery[type] ??= defaults;
-    const mastery = player.weaponMastery[type];
-    mastery.level = Math.max(1, Math.min(BALANCE.MASTERY_MAX_LEVEL, Number.isFinite(mastery.level) ? Math.floor(mastery.level) : 1));
-    mastery.exp = Math.max(0, Number.isFinite(mastery.exp) ? mastery.exp : 0);
-    mastery.totalTrainingTime = Math.max(0, Number.isFinite(mastery.totalTrainingTime) ? mastery.totalTrainingTime : 0);
-  }
-  player.skills ??= ["golpe_poderoso"];
-  state.inventory ??= [];
-  state.world ??= {};
-  state.world.currentArea ??= "ruinas_despertar";
-  state.world.explorationCount ??= 0;
-  state.world.regionProgress ??= {};
-  state.world.bossesDefeated ??= {};
-  state.world.bossPity ??= {};
-  state.settings ??= { musicEnabled: true };
-  state.expedition ??= { active: false, steps: 0 };
-  state.trainingSession ??= null;
-  state.autoFarmSession ??= null;
-  const farmDefaults = { autoPotion: true, potionThreshold: 0.4, preserveRarePotions: true, stopWhenFull: true, stopWithoutPotions: false };
-  state.autoFarmSettings = { ...farmDefaults, ...(state.autoFarmSettings || {}) };
-  if (state.trainingSession?.active) {
-    const startedAt = Number(state.trainingSession.startedAt);
-    if (!WEAPON_TYPES[state.trainingSession.weaponType] || !Number.isFinite(startedAt) || startedAt <= 0) state.trainingSession = null;
-  }
-  if (state.autoFarmSession?.active) {
-    const startedAt = Number(state.autoFarmSession.startedAt);
-    if (!AREAS[state.autoFarmSession.regionId] || !Number.isFinite(startedAt) || startedAt <= 0 || !isValidFarmSnapshot(state.autoFarmSession.playerSnapshot)) state.autoFarmSession = null;
-  }
-  if (state.trainingSession?.active && state.autoFarmSession?.active) state.autoFarmSession = null;
-  if (state.combat) state.combat.visualActions ??= [];
-  return state;
+function migrateVisualV1(state) {
+  return normalizeGameState({
+    ...state,
+    world: {
+      scene: state.scene,
+      caveVisits: state.caveVisits,
+      currentArea: "ruinas_despertar",
+      regionProgress: {},
+      bossesDefeated: {},
+      bossPity: {}
+    },
+    settings: { audioEnabled: state.sound }
+  });
 }
 
-function isValidFarmSnapshot(snapshot) {
-  if (!snapshot || typeof snapshot !== "object") return false;
-  const finiteFields = ["level", "hp", "maxHp", "attack", "defense", "crit", "attackInterval", "occupiedSlots", "bagCapacity"];
-  if (finiteFields.some(field => !Number.isFinite(Number(snapshot[field])))) return false;
-  return Number(snapshot.level) > 0 && Number(snapshot.maxHp) > 0 && Number(snapshot.attackInterval) > 0 && Number(snapshot.bagCapacity) > 0 && Boolean(WEAPON_TYPES[snapshot.weaponType]) && snapshot.attributes && typeof snapshot.attributes === "object";
+function migrateLegacyTerminal(state) {
+  return normalizeGameState({
+    ...state,
+    player: { ...state.player, inventory: state.inventory },
+    world: { ...state.world, scene: "village", caveVisits: 0 },
+    settings: { audioEnabled: state.settings?.musicEnabled ?? true },
+    systems: {
+      trainingSession: state.trainingSession,
+      autoFarmSession: state.autoFarmSession,
+      autoFarmSettings: state.autoFarmSettings
+    }
+  });
 }
 
-export function deleteSave() { localStorage.removeItem(SAVE_KEY); }
-export function hasSave() { return loadGame() !== null; }
+function getStorage() {
+  if (!globalThis.localStorage) throw new Error("localStorage não está disponível.");
+  return globalThis.localStorage;
+}

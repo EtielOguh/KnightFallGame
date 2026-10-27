@@ -1,0 +1,9 @@
+{
+  "name": "knightfall-canvas-rpg",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test",
+    "simulate:balance": "node scripts/simulate-balance.mjs"
+  }
+}

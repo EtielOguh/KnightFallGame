@@ -2,34 +2,313 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="KnightFall — RPG de fantasia sombria em texto.">
-  <title>KnightFall</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#11140f">
+  <meta name="description" content="KnightFall — RPG 2D de fantasia sombria.">
+  <title>KnightFall — RPG 2D</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath fill='%23151913' stroke='%23d8b45e' stroke-width='3' d='M8 5h48v40L32 59 8 45z'/%3E%3Ctext x='32' y='42' text-anchor='middle' font-size='32' font-family='serif' font-weight='bold' fill='%23f5d787'%3EK%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <main class="terminal-shell" aria-label="KnightFall">
-    <header class="terminal-header">
-      <span class="brand-mark">KNIGHT<span>FALL</span></span>
-      <span class="status-light" aria-label="Autosave ativo">◆ AUTOSAVE</span>
+  <main class="game-shell" aria-label="KnightFall RPG 2D">
+    <header class="topbar">
+      <button class="brand" type="button" title="Voltar ao menu">
+        <span class="brand-sigil" aria-hidden="true">K</span>
+        <span><strong>KNIGHTFALL</strong><small>ECOS DA PEDRA NEGRA</small></span>
+      </button>
+      <div class="topbar-actions">
+        <span class="save-status" id="save-status"><i></i> Progresso salvo</span>
+        <button class="icon-button" id="sound-button" type="button" aria-label="Desativar sons" aria-pressed="true">♪</button>
+        <button class="icon-button" id="fullscreen-button" type="button" aria-label="Tela cheia">⛶</button>
+      </div>
     </header>
 
-    <section id="terminal-output" class="terminal-output" aria-live="polite" aria-atomic="false"></section>
+    <section class="game-layout">
+      <div class="world-column">
+        <div class="viewport" id="viewport">
+          <canvas id="game-canvas" width="960" height="540" aria-label="Mundo de KnightFall. Use as setas ou WASD para caminhar.">
+            Seu navegador precisa suportar Canvas para jogar KnightFall.
+          </canvas>
 
-    <form id="terminal-form" class="terminal-input-row visually-hidden" autocomplete="off">
-      <label for="terminal-input" class="prompt">&gt;</label>
-      <input
-        id="terminal-input"
-        class="terminal-input"
-        type="text"
-        inputmode="text"
-        spellcheck="false"
-        aria-label="Digite uma opção ou comando"
-        autofocus
-      >
-      <span class="cursor" aria-hidden="true"></span>
-    </form>
+          <div class="hud" aria-live="polite">
+            <section class="player-card" aria-label="Status do herói">
+              <div class="level-medallion"><span>NV</span><strong id="level-value">1</strong></div>
+              <div class="player-vitals">
+                <div class="vital-label"><strong id="player-name">Aldric</strong><span id="hp-text">100 / 100</span></div>
+                <div class="bar health-bar"><span id="hp-bar"></span></div>
+                <div class="bar xp-bar"><span id="xp-bar"></span></div>
+              </div>
+            </section>
+
+            <section class="objective-card" aria-label="Objetivo atual">
+              <span class="eyebrow">OBJETIVO ATUAL</span>
+              <strong id="objective-title">Entre na Caverna Sombria</strong>
+              <small id="objective-detail">Siga a trilha ao nordeste da vila</small>
+            </section>
+          </div>
+
+          <div class="location-badge" id="location-badge"><span>♦</span> Clareira do Corvo</div>
+          <div class="cave-floor-badge" id="cave-floor-badge" hidden>ANDAR <strong id="cave-floor-value">1 / 20</strong></div>
+          <div class="toast" id="toast" role="status"></div>
+          <div class="interaction-prompt" id="interaction-prompt" hidden>
+            <kbd>E</kbd><span id="interaction-text">Interagir</span>
+          </div>
+
+          <div class="enemy-hud" id="enemy-hud" hidden>
+            <div><strong id="enemy-name">Goblin Saqueador</strong><span id="enemy-phase"></span><span id="enemy-hp-text">40 / 40</span></div>
+            <div class="bar enemy-bar"><span id="enemy-hp-bar"></span></div>
+          </div>
+
+          <div class="skill-hotbar" id="skill-hotbar" aria-label="Habilidades ativas">
+            <div class="stamina-meter" title="Vigor"><span id="stamina-bar"></span><small id="stamina-text">100</small></div>
+            <button type="button" data-skill="golpe_poderoso" aria-label="Golpe Poderoso">
+              <canvas width="32" height="32" aria-hidden="true"></canvas><kbd>1</kbd><span class="skill-cooldown"></span>
+            </button>
+            <button type="button" data-skill="corte_giratorio" aria-label="Corte Giratório">
+              <canvas width="32" height="32" aria-hidden="true"></canvas><kbd>2</kbd><span class="skill-cooldown"></span>
+            </button>
+            <button type="button" data-skill="investida" aria-label="Investida">
+              <canvas width="32" height="32" aria-hidden="true"></canvas><kbd>3</kbd><span class="skill-cooldown"></span>
+            </button>
+          </div>
+
+          <div class="touch-controls" aria-label="Controles de toque">
+            <div class="dpad">
+              <button data-control="ArrowUp" class="up" type="button" aria-label="Andar para cima">▲</button>
+              <button data-control="ArrowLeft" class="left" type="button" aria-label="Andar para esquerda">◀</button>
+              <button data-control="ArrowDown" class="down" type="button" aria-label="Andar para baixo">▼</button>
+              <button data-control="ArrowRight" class="right" type="button" aria-label="Andar para direita">▶</button>
+            </div>
+            <div class="touch-actions">
+              <button data-action="interact" type="button" aria-label="Interagir">E</button>
+              <button data-action="inventory" class="inventory-touch" type="button" aria-label="Abrir inventário">I</button>
+              <button data-action="dodge" class="dodge-touch" type="button" aria-label="Esquivar">↝</button>
+              <button data-action="attack" class="attack-touch" type="button" aria-label="Atacar">⚔</button>
+            </div>
+          </div>
+
+          <div class="start-screen" id="start-screen">
+            <div class="start-vignette"></div>
+            <div class="start-content">
+              <span class="start-kicker">UM RPG 2D DE FANTASIA SOMBRIA</span>
+              <h1>Knight<span>Fall</span></h1>
+              <p>A escuridão sob a montanha despertou.<br>Entre, lute e volte mais forte.</p>
+              <div class="start-actions">
+                <button class="primary-button" id="continue-button" type="button">Continuar jornada</button>
+                <button class="secondary-button" id="new-game-button" type="button">Novo jogo</button>
+              </div>
+              <small>Setas / WASD para mover · Espaço para atacar · Shift para esquivar</small>
+            </div>
+          </div>
+        </div>
+
+        <div class="control-strip" aria-label="Comandos do jogo">
+          <span><kbd>WASD</kbd> ou <kbd>SETAS</kbd> Mover</span>
+          <span><kbd>ESPAÇO</kbd> Atacar</span>
+          <span><kbd>SHIFT</kbd> Esquivar</span>
+          <span><kbd>E</kbd> Interagir</span>
+          <span><kbd>Q</kbd> Usar poção</span>
+          <span><kbd>I</kbd> Inventário</span>
+          <span><kbd>F</kbd> Forja</span>
+          <span><kbd>K</kbd> Habilidades</span>
+          <span><kbd>R</kbd> Regiões</span>
+        </div>
+      </div>
+
+      <aside class="side-panel" aria-label="Informações da jornada">
+        <section class="side-section hero-summary">
+          <div class="section-heading"><span>O VIAJANTE</span><i></i></div>
+          <div class="hero-portrait" aria-hidden="true"><div class="portrait-sprite"></div></div>
+          <h2 id="side-player-name">Aldric</h2>
+          <p>Guardião do Vale Cinzento</p>
+          <dl class="stats-grid">
+            <div><dt>ATAQUE</dt><dd id="attack-stat">12</dd></div>
+            <div><dt>ARMADURA</dt><dd id="armor-stat">2</dd></div>
+            <div><dt>ABATES</dt><dd id="kills-stat">0</dd></div>
+          </dl>
+        </section>
+
+        <section class="side-section journey-section">
+          <div class="section-heading"><span>JORNADA</span><i></i></div>
+          <div class="journey-row active"><span>01</span><div><strong>A Clareira</strong><small>Refúgio e mercador</small></div><b>✓</b></div>
+          <div class="journey-row"><span>02</span><div><strong id="journey-region-name">Caverna Sombria</strong><small id="cave-progress">Estágio 1 de 20</small></div><b>♦</b></div>
+          <div class="journey-row locked" id="grove-journey-row"><span>03</span><div><strong>Bosque das Cinzas</strong><small id="grove-journey-status">Derrote o Rei Goblin</small></div><b>◆</b></div>
+          <button class="open-regions-button" id="region-button" type="button">Mapa de regiões <b>R</b></button>
+        </section>
+
+        <section class="side-section inventory-section">
+          <div class="section-heading"><span>MOCHILA</span><i></i></div>
+          <button class="inventory-row" id="potion-button" type="button" title="Usar poção de cura">
+            <span class="item-icon potion-icon">◆</span>
+            <span><strong>Poção de cura</strong><small>Recupera 45 de vida</small></span>
+            <b id="potion-count">× 2</b>
+          </button>
+          <div class="inventory-row coin-row">
+            <span class="item-icon coin-icon">●</span>
+            <span><strong>Moedas antigas</strong><small>Use no mercador</small></span>
+            <b id="coin-count">35</b>
+          </div>
+          <button class="open-inventory-button" id="inventory-button" type="button">
+            <span>Abrir inventário</span><b id="inventory-summary">3 / 20</b>
+          </button>
+          <button class="open-skills-button" id="skills-button" type="button">Habilidades e maestria <b>K</b></button>
+        </section>
+      </aside>
+    </section>
   </main>
+
+  <dialog class="game-dialog merchant-dialog" id="merchant-dialog">
+    <form method="dialog" class="dialog-frame">
+      <button class="dialog-close" value="close" aria-label="Fechar mercador">×</button>
+      <header class="dialog-header">
+        <span class="merchant-avatar" aria-hidden="true">BRAM</span>
+        <div><span class="eyebrow">MERCADOR DA CLAREIRA</span><h2>Bram, o Errante</h2><p>“Ouro compra aço. Aço compra mais um amanhecer.”</p></div>
+        <div class="wallet"><span>●</span><strong id="merchant-coins">35</strong></div>
+      </header>
+      <div class="shop-grid">
+        <article class="shop-item">
+          <span class="shop-icon sword-icon">⚔</span><div><small>MELHORIA</small><h3>Afiar espada</h3><p>+3 de dano permanente.</p></div>
+          <button data-buy="damage" type="button"><span id="damage-price">30</span> ●</button>
+        </article>
+        <article class="shop-item">
+          <span class="shop-icon armor-icon">⬟</span><div><small>MELHORIA</small><h3>Reforçar armadura</h3><p>+2 de defesa permanente.</p></div>
+          <button data-buy="armor" type="button"><span id="armor-price">35</span> ●</button>
+        </article>
+        <article class="shop-item">
+          <span class="shop-icon potion-icon">◆</span><div><small>CONSUMÍVEL</small><h3>Poção de cura</h3><p>Recupera 45 de vida.</p></div>
+          <button data-buy="potion" type="button">15 ●</button>
+        </article>
+        <article class="shop-item">
+          <span class="shop-icon heal-icon">✦</span><div><small>SERVIÇO</small><h3>Descansar</h3><p>Recupere toda a vida.</p></div>
+          <button data-buy="heal" type="button">8 ●</button>
+        </article>
+      </div>
+      <div class="merchant-catalog-heading"><span class="eyebrow">EQUIPAMENTOS DE BRAM</span><small>Compras usam a mesma mochila e moedas da jornada.</small></div>
+      <div class="merchant-equipment-grid" id="merchant-equipment-grid"></div>
+      <button class="forge-link-button" id="merchant-forge-button" type="button"><span>◆</span> Abrir estação de forja</button>
+      <footer>Pressione <kbd>ESC</kbd> para voltar ao jogo</footer>
+    </form>
+  </dialog>
+
+  <dialog class="game-dialog forge-dialog" id="forge-dialog">
+    <div class="dialog-frame forge-frame">
+      <button class="dialog-close" id="forge-close-button" type="button" aria-label="Fechar forja">×</button>
+      <header class="forge-header">
+        <div><span class="eyebrow">ESTAÇÃO DE BRAM</span><h2>Forja da Clareira</h2><p>Reforce uma instância de equipamento de +0 até +10.</p></div>
+        <div class="wallet"><span>●</span><strong id="forge-coins">0</strong></div>
+      </header>
+      <div class="forge-materials" id="forge-materials" aria-label="Materiais disponíveis"></div>
+      <div class="forge-layout">
+        <section class="forge-equipment-panel">
+          <div class="panel-title"><h3>Equipamentos</h3><small>Selecione uma peça</small></div>
+          <div class="forge-equipment-list" id="forge-equipment-list" role="listbox" aria-label="Equipamentos para reforçar"></div>
+          <p class="inventory-empty" id="forge-empty" hidden>Nenhum equipamento disponível.</p>
+        </section>
+        <section class="forge-workbench">
+          <canvas id="forge-preview" width="220" height="150" aria-label="Prévia procedural do equipamento na bigorna"></canvas>
+          <span class="detail-rarity" id="forge-rarity">COMUM</span>
+          <h3 id="forge-name">Selecione um equipamento</h3>
+          <p class="forge-level" id="forge-level">Reforço +0</p>
+          <div class="forge-stat-comparison" id="forge-stats"></div>
+          <div class="forge-cost" id="forge-cost"></div>
+          <p class="forge-message" id="forge-message" role="status"></p>
+          <div class="forge-actions">
+            <button class="primary-button" id="forge-button" type="button">Reforçar</button>
+            <button class="secondary-button" id="forge-sell-button" type="button">Vender</button>
+          </div>
+        </section>
+      </div>
+      <footer>Reforços têm 100% de sucesso e não reduzem o nível do item.</footer>
+    </div>
+  </dialog>
+
+  <dialog class="game-dialog encounter-dialog" id="encounter-dialog">
+    <div class="dialog-frame compact-dialog encounter-frame">
+      <span class="encounter-mark" aria-hidden="true">◆</span>
+      <span class="eyebrow" id="encounter-kicker">ANDAR CONCLUÍDO</span>
+      <h2 id="encounter-title">Vitória na caverna</h2>
+      <p id="encounter-summary">O caminho adiante está aberto.</p>
+      <div class="encounter-rewards" id="encounter-rewards"></div>
+      <div class="encounter-actions">
+        <button class="primary-button" id="advance-floor-button" type="button">Avançar</button>
+        <button class="secondary-button" id="leave-cave-button" type="button">Retornar à vila</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="game-dialog skills-dialog" id="skills-dialog">
+    <div class="dialog-frame skills-frame">
+      <button class="dialog-close" id="skills-close-button" type="button" aria-label="Fechar habilidades">×</button>
+      <header class="skills-header">
+        <div><span class="eyebrow">CAMINHO DO GUERREIRO</span><h2>Habilidades e Maestria</h2><p>Use pontos de progressão para aprender e fortalecer técnicas.</p></div>
+        <div class="skill-points"><small>PONTOS</small><strong id="skill-points">0</strong></div>
+      </header>
+      <div class="skills-layout">
+        <section class="skills-list-panel">
+          <div class="panel-title"><h3>Ativas</h3><small>Teclas 1, 2 e 3</small></div>
+          <div class="skill-card-list" id="active-skills-list"></div>
+          <div class="panel-title passive-title"><h3>Passivas</h3><small>Sempre ativas após desbloqueadas</small></div>
+          <div class="skill-card-list" id="passive-skills-list"></div>
+        </section>
+        <aside class="mastery-panel">
+          <canvas id="mastery-emblem" width="150" height="150" aria-label="Emblema procedural de maestria com espada"></canvas>
+          <span class="eyebrow">MAESTRIA DE ARMA</span>
+          <h3>Espadas · Nível <span id="sword-mastery-level">1</span></h3>
+          <div class="mastery-progress"><span id="sword-mastery-bar"></span></div>
+          <p id="sword-mastery-text">0 / 100 de experiência</p>
+          <small>Avança somente ao causar dano real. Cada inimigo possui um limite de experiência para impedir treinamento abusivo.</small>
+        </aside>
+      </div>
+      <footer>Antecipações podem ser canceladas com esquiva. Após o golpe começar, a técnica precisa concluir.</footer>
+    </div>
+  </dialog>
+
+  <dialog class="game-dialog region-dialog" id="region-dialog">
+    <div class="dialog-frame region-frame">
+      <button class="dialog-close" id="region-close-button" type="button" aria-label="Fechar mapa">×</button>
+      <header class="region-header"><span class="eyebrow">CAMINHOS DE KNIGHTFALL</span><h2>Mapa de Regiões</h2><p>Escolha uma região desbloqueada. O progresso de cada jornada é preservado separadamente.</p></header>
+      <div class="region-grid" id="region-grid"></div>
+      <footer>Regiões anteriores permanecem disponíveis depois de novas conquistas.</footer>
+    </div>
+  </dialog>
+
+  <dialog class="game-dialog inventory-dialog" id="inventory-dialog">
+    <form method="dialog" class="dialog-frame inventory-frame">
+      <button class="dialog-close" value="close" aria-label="Fechar inventário">×</button>
+      <header class="inventory-header">
+        <div><span class="eyebrow">EQUIPAMENTO DO VIAJANTE</span><h2>Inventário</h2><p>Selecione um item para ver atributos e comparação.</p></div>
+        <strong id="inventory-capacity">3 / 20 espaços</strong>
+      </header>
+      <div class="inventory-stats" id="inventory-stats" aria-label="Atributos finais"></div>
+      <div class="inventory-layout">
+        <section class="equipment-panel" aria-labelledby="equipment-title">
+          <h3 id="equipment-title">Equipado</h3>
+          <div class="equipment-slots" id="equipment-slots"></div>
+        </section>
+        <section class="bag-panel" aria-labelledby="bag-title">
+          <div class="panel-title"><h3 id="bag-title">Mochila</h3><small>Itens novos têm uma marca dourada</small></div>
+          <div class="inventory-grid" id="inventory-grid" role="listbox" aria-label="Itens da mochila"></div>
+          <p class="inventory-empty" id="inventory-empty" hidden>A mochila está vazia.</p>
+        </section>
+        <aside class="item-detail" id="item-detail" aria-live="polite">
+          <p class="detail-placeholder">Escolha um item da mochila ou um equipamento.</p>
+        </aside>
+      </div>
+      <footer>Pressione <kbd>I</kbd> ou <kbd>ESC</kbd> para voltar ao jogo</footer>
+    </form>
+  </dialog>
+
+  <div class="item-tooltip" id="item-tooltip" role="tooltip" hidden></div>
+
+  <dialog class="game-dialog death-dialog" id="death-dialog">
+    <form method="dialog" class="dialog-frame compact-dialog">
+      <span class="death-mark">☠</span>
+      <span class="eyebrow">A ESCURIDÃO VENCEU</span>
+      <h2>Você caiu em combate</h2>
+      <p>Bram encontrou você antes que fosse tarde. Parte das moedas ficou para trás.</p>
+      <button class="primary-button" id="return-button" value="return">Voltar à clareira</button>
+    </form>
+  </dialog>
 
   <script type="module" src="js/game.js"></script>
 </body>

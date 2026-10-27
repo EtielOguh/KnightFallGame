@@ -67,7 +67,35 @@ export const ENEMIES = Object.freeze({
 function mob(name, hp, attack, defense, exp, coins, drops) { return { name, hp, attack, defense, exp, coins, drops, boss: false }; }
 function boss(name, level, hp, attack, defense, exp, coins, setItems, drops) { return { name, level, hp, attack, defense, exp, coins, drops, setItems, boss: true }; }
 
-export const ITEMS = Object.freeze({
+export const RARITIES = deepFreeze({
+  comum: { label: "Comum", color: "#aeb2a5", rank: 1 },
+  incomum: { label: "Incomum", color: "#75ae68", rank: 2 },
+  raro: { label: "Raro", color: "#5e9fbd", rank: 3 },
+  épico: { label: "Épico", color: "#a77bd1", rank: 4 },
+  lendário: { label: "Lendário", color: "#dfaa45", rank: 5 }
+});
+
+export const EQUIPMENT_SLOTS = deepFreeze({
+  weapon: { label: "Arma", icon: "sword" },
+  helmet: { label: "Capacete", icon: "helmet" },
+  chest: { label: "Peitoral", icon: "chest" },
+  boots: { label: "Botas", icon: "boots" },
+  ring: { label: "Anel", icon: "ring" },
+  amulet: { label: "Amuleto", icon: "amulet" }
+});
+
+export const ITEMS = defineItems({
+  espada_enferrujada: equipment("Espada Enferrujada", "weapon", "comum", 1, { attack: 2 }, 5, "Uma lâmina marcada pelo tempo, ainda confiável.", { kind: "sword", style: "rusty", metal: "#9a7654" }),
+  espada_curta: { ...equipment("Espada Curta", "weapon", "incomum", 1, { attack: 4, crit: 1 }, 11, "Rápida, equilibrada e feita para túneis apertados.", { kind: "sword", style: "short", metal: "#bcc5c3" }), buyPrice: 72 },
+  espada_ferro: equipment("Espada de Ferro", "weapon", "raro", 2, { attack: 7 }, 22, "Ferro bem trabalhado, com guarda reforçada.", { kind: "sword", style: "iron", metal: "#dce5e2" }),
+  armadura_couro: equipment("Armadura de Couro", "chest", "comum", 1, { armor: 3, maxHp: 6 }, 9, "Couro endurecido com tiras sobrepostas.", { kind: "chest", style: "leather", primary: "#8b5638", accent: "#c48a55" }),
+  capacete_ferro: { ...equipment("Capacete de Ferro", "helmet", "incomum", 1, { armor: 2 }, 12, "Protege a testa e as têmporas sem limitar a visão.", { kind: "helmet", style: "iron", primary: "#98a5a5", accent: "#d6dfdc" }), buyPrice: 65 },
+  botas_couro: { ...equipment("Botas de Couro", "boots", "comum", 1, { armor: 1, moveSpeed: 3 }, 7, "Botas leves com solado firme para pedra úmida.", { kind: "boots", style: "leather", primary: "#68422e", accent: "#a56d45" }), buyPrice: 55 },
+  anel_vitalidade: equipment("Anel de Vitalidade", "ring", "raro", 2, { maxHp: 18 }, 20, "Uma pedra rubra aquece quando o perigo se aproxima.", { kind: "ring", style: "vitality", primary: "#d7b45f", accent: "#c6534b" }),
+  amuleto_vigia: equipment("Amuleto do Vigia", "amulet", "incomum", 1, { crit: 3, maxHp: 5 }, 14, "Olho de pedra usado pelos antigos sentinelas.", { kind: "amulet", style: "watcher", primary: "#c3a75d", accent: "#6ea18a" }),
+  coroa_rei_goblin: equipment("Coroa do Rei Goblin", "helmet", "lendário", 4, { armor: 4, maxHp: 15, crit: 2 }, 85, "Uma coroa brutal de ferro e ouro, tomada do primeiro rei da caverna.", { kind: "helmet", style: "goblin_crown", primary: "#b18a3f", accent: "#f0cf6a" }),
+  espada_cinzas: equipment("Lâmina das Cinzas", "weapon", "raro", 5, { attack: 10, crit: 2 }, 38, "Aço escurecido temperado na seiva ardente do bosque.", { kind: "sword", style: "ash", metal: "#b9afa0" }),
+
   espada_gasta: weapon("Espada Gasta", "comum", 4, "Uma lâmina antiga, ainda afiada."),
   machado_lascado: weapon("Machado Lascado", "comum", 5, "Pesado, direto e confiável.", "axe"),
   lanca_vigia: weapon("Lança do Vigia", "comum", 5, "Mantém a ameaça à distância.", "spear"),
@@ -88,7 +116,11 @@ export const ITEMS = Object.freeze({
   botas_matriarca: bossGear("Patas de Seda", "boots", "matriarca", { defense: 4, crit: 4 }, "Permitem passos rápidos e silenciosos."),
   arma_cervo: bossGear("Galhada do Rei", "weapon", "cervo", { attack: 23 }, "Uma galhada convertida em arma ritual.", "spear"),
   armadura_cervo: bossGear("Pele do Cervo-Rei", "armor", "cervo", { defense: 14, maxHp: 35 }, "Pele tomada por raízes antigas."),
-  coroa_cervo: bossGear("Coroa do Cervo-Rei", "helmet", "cervo", { defense: 7, maxHp: 16 }, "Símbolo do soberano do bosque."),
+  coroa_cervo: {
+    ...bossGear("Coroa do Cervo-Rei", "helmet", "cervo", { defense: 7, maxHp: 16 }, "Símbolo do soberano do bosque."),
+    requiredLevel: 5,
+    visual: { kind: "helmet", style: "antler_crown", primary: "#d9c79d", accent: "#9f603b" }
+  },
   amuleto_cervo: bossGear("Coração Putrificado", "charm", "cervo", { attack: 7, crit: 7 }, "Continua batendo fora do corpo."),
   botas_cervo: bossGear("Cascos do Bosque", "boots", "cervo", { defense: 6, maxHp: 12 }, "Raízes se afastam de seus passos."),
   montante_lamento: bossGear("Montante do Lamento", "weapon", "lamento", { attack: 30, maxHp: 25 }, "Ainda guarda o rugido do dragão.", "sword"),
@@ -109,32 +141,76 @@ export const ITEMS = Object.freeze({
 
   couro_rustico: armor("Armadura de Couro", "comum", 3, 8, "Proteção leve remendada."),
   manto_cinza: armor("Manto Cinzento", "incomum", 5, 12, "Tecido marcado por cinzas."),
-  armadura_casca: armor("Armadura de Casca", "raro", 7, 18, "Madeira morta que se recusa a quebrar."),
+  armadura_casca: { ...armor("Armadura de Casca", "raro", 7, 18, "Madeira morta que se recusa a quebrar."), requiredLevel: 5, visual: { kind: "chest", style: "bark", primary: "#574536", accent: "#8d7752" } },
   peitoral_pedra: armor("Peitoral de Pedra", "épico", 10, 24, "Pesado como a montanha."),
   escudo_ferro: { ...armor("Broquel de Ferro", "incomum", 4, 5, "Pequeno escudo preso ao antebraço."), slot: "charm" },
   amuleto_presa: charm("Amuleto de Presa", "incomum", 2, 5, "Aumenta o instinto assassino."),
-  anel_agilidade: charm("Anel do Corvo", "raro", 3, 7, "Torna cada movimento mais preciso."),
+  anel_agilidade: { ...charm("Anel do Corvo", "raro", 3, 7, "Torna cada movimento mais preciso."), slot: "ring" },
   maca_catacumba: weapon("Maça de Catacumba", "raro", 19, "Feita para romper ossos e armaduras.", "axe"),
   placas_ossada: armor("Placas de Ossada", "épico", 15, 34, "Proteção montada com restos de cavaleiros."),
-  anel_espectral: charm("Anel Espectral", "épico", 8, 10, "Torna a mão quase translúcida."),
+  anel_espectral: { ...charm("Anel Espectral", "épico", 8, 10, "Torna a mão quase translúcida."), slot: "ring" },
   espada_eclipse: weapon("Espada do Eclipse", "épico", 28, "Sua lâmina alterna entre luz e sombra."),
   cetro_real: weapon("Cetro Real Corrompido", "épico", 30, "Símbolo de autoridade transformado em arma.", "staff"),
   armadura_carrasco: armor("Armadura do Carrasco", "épico", 22, 48, "Placas negras cobertas por sentenças."),
   olho_quimera: charm("Olho da Quimera", "épico", 12, 13, "Continua seguindo seus inimigos."),
 
-  pocao_menor: { name: "Poção Menor", type: "consumable", rarity: "comum", heal: 40, description: "Recupera 40 HP." },
+  pocao_menor: { name: "Poção Menor", type: "consumable", rarity: "comum", heal: 45, description: "Recupera 45 HP." },
   pocao_maior: { name: "Poção Maior", type: "consumable", rarity: "raro", heal: 90, description: "Recupera 90 HP." },
   pocao_suprema: { name: "Poção Suprema", type: "consumable", rarity: "épico", heal: 170, description: "Recupera 170 HP." },
-  fragmento_ferro: { name: "Fragmento de Ferro", type: "material", rarity: "comum", description: "Material para fortalecer equipamentos." },
-  essencia: { name: "Essência Abissal", type: "material", rarity: "incomum", description: "Energia usada na evolução de itens." }
+  fragmento_ferro: { name: "Minério de Ferro", type: "material", rarity: "comum", sellValue: 2, description: "Minério bruto usado nos primeiros reforços.", visual: { kind: "material", style: "iron_ore", primary: "#68706b", accent: "#b5bbb2" } },
+  fragmento_aco: { name: "Fragmento de Aço", type: "material", rarity: "incomum", sellValue: 5, description: "Aço goblin recuperado de armas e couraças.", visual: { kind: "material", style: "steel", primary: "#9ba8aa", accent: "#e0e7e3" } },
+  essencia: { name: "Essência Goblin", type: "material", rarity: "raro", sellValue: 8, description: "Energia verde condensada, necessária para reforços avançados.", visual: { kind: "material", style: "goblin_essence", primary: "#6e9b48", accent: "#c1de72" } },
+  cristal_raro: { name: "Cristal Raro", type: "material", rarity: "épico", sellValue: 18, description: "Cristal da coroa usado nos reforços finais.", visual: { kind: "material", style: "rare_crystal", primary: "#8971bb", accent: "#e0c7ff" } },
+  seiva_corrompida: { name: "Seiva Corrompida", type: "material", rarity: "incomum", sellValue: 7, description: "Seiva espessa usada para estabilizar reforços elevados.", visual: { kind: "material", style: "ash_sap", primary: "#79513e", accent: "#d28b55" } },
+  cinza_viva: { name: "Cinza Viva", type: "material", rarity: "raro", sellValue: 12, description: "Cinza que conserva calor e fortalece ligas avançadas.", visual: { kind: "material", style: "living_ash", primary: "#696765", accent: "#e18b52" } }
 });
 
 function weapon(name, rarity, attack, description, weaponType = "sword") { return { name, type: "equipment", slot: "weapon", rarity, attack, weaponType, description }; }
-function armor(name, rarity, defense, maxHp, description) { return { name, type: "equipment", slot: "armor", rarity, defense, maxHp, description }; }
-function charm(name, rarity, attack, crit, description) { return { name, type: "equipment", slot: "charm", rarity, attack, crit, description }; }
+function armor(name, rarity, defense, maxHp, description) { return { name, type: "equipment", slot: "chest", rarity, defense, maxHp, description }; }
+function charm(name, rarity, attack, crit, description) { return { name, type: "equipment", slot: "amulet", rarity, attack, crit, description }; }
 function bossGear(name, slot, setId, stats, description, weaponType = null) {
   const bossNames = { guardiao: "Guardião Sem Rosto", matriarca: "Matriarca Aracnídea", cervo: "Cervo-Rei Putrificado", lamento: "Dragão do Lamento", necromante: "Necromante dos Ossos", rei: "Rei Caído do Eclipse" };
-  return { name, type: "equipment", slot, rarity: "boss", setId, sourceBoss: bossNames[setId], bossItem: true, ...stats, ...(weaponType ? { weaponType } : {}), description };
+  return { name, type: "equipment", slot: slot === "armor" ? "chest" : slot === "charm" ? "amulet" : slot, rarity: "lendário", setId, sourceBoss: bossNames[setId], bossItem: true, ...stats, ...(weaponType ? { weaponType } : {}), description };
+}
+
+function equipment(name, slot, rarity, requiredLevel, stats, sellValue, description, visual) {
+  return { name, type: "equipment", slot, rarity, requiredLevel, stats, sellValue, description, visual };
+}
+
+function defineItems(definitions) {
+  return deepFreeze(Object.fromEntries(Object.entries(definitions).map(([definitionId, definition]) => {
+    const slot = definition.slot === "armor" ? "chest" : definition.slot === "charm" ? "amulet" : definition.slot;
+    const rarity = RARITIES[definition.rarity] ? definition.rarity : definition.rarity === "boss" ? "lendário" : "comum";
+    const stats = {
+      ...(definition.stats || {}),
+      ...(Number.isFinite(definition.attack) ? { attack: definition.attack } : {}),
+      ...(Number.isFinite(definition.defense) ? { armor: definition.defense } : {}),
+      ...(Number.isFinite(definition.maxHp) ? { maxHp: definition.maxHp } : {}),
+      ...(Number.isFinite(definition.crit) ? { crit: definition.crit } : {})
+    };
+    const statValue = Object.values(stats).reduce((sum, value) => sum + Math.abs(Number(value) || 0), 0);
+    const normalized = {
+      ...definition,
+      definitionId,
+      slot,
+      rarity,
+      requiredLevel: Math.max(1, Math.floor(definition.requiredLevel || 1)),
+      stats,
+      sellValue: Math.max(1, Math.floor(definition.sellValue || statValue * (RARITIES[rarity]?.rank || 1) + 2)),
+      buyPrice: Math.max(3, Math.floor(definition.buyPrice || definition.sellValue * 3 || statValue * (RARITIES[rarity]?.rank || 1) * 3 + 6)),
+      visual: definition.visual || defaultItemVisual(slot, definition.type)
+    };
+    delete normalized.attack;
+    delete normalized.defense;
+    delete normalized.maxHp;
+    delete normalized.crit;
+    return [definitionId, normalized];
+  })));
+}
+
+function defaultItemVisual(slot, type) {
+  const kind = type === "consumable" ? "potion" : type === "material" ? "material" : slot || "item";
+  return { kind, style: "default", primary: "#aeb2a5", accent: "#d8b45e" };
 }
 
 export const SET_BONUSES = Object.freeze({
@@ -146,9 +222,300 @@ export const SET_BONUSES = Object.freeze({
   rei: { name: "Soberania do Eclipse", attack: 28, defense: 18, crit: 12, maxHp: 90 }
 });
 
-export const SKILLS = Object.freeze({
-  golpe_poderoso: { name: "Golpe Poderoso", level: 1, energy: 2, multiplier: 1.65, description: "Ataque pesado que causa 165% de dano." },
-  corte_preciso: { name: "Corte Preciso", level: 3, energy: 2, multiplier: 1.25, critBonus: 35, description: "Ataque com grande chance de crítico." },
-  furia_abissal: { name: "Fúria Abissal", level: 6, energy: 3, multiplier: 2.25, description: "Canaliza o abismo em um golpe devastador." },
-  queda_cavaleiro: { name: "Queda do Cavaleiro", level: 10, energy: 3, multiplier: 2.8, description: "Um golpe final digno de KnightFall." }
+export const SKILLS = deepFreeze({
+  golpe_poderoso: {
+    name: "Golpe Poderoso", classId: "warrior", kind: "active", hotkey: "Digit1", maxLevel: 5,
+    requiredPlayerLevel: 1, weaponTypes: ["sword"], pointCosts: [1, 1, 1, 2, 2], cooldowns: [4.8, 4.55, 4.3, 4.05, 3.8],
+    resource: { type: "stamina", costs: [24, 24, 23, 23, 22] },
+    phases: { anticipation: .24, active: .16, recovery: .36 },
+    effects: { damageMultipliers: [1.65, 1.78, 1.91, 2.04, 2.2], range: 94, arcDot: .18 },
+    description: "Ergue a espada e desfere um golpe frontal descendente de grande impacto."
+  },
+  corte_giratorio: {
+    name: "Corte Giratório", classId: "warrior", kind: "active", hotkey: "Digit2", maxLevel: 5,
+    requiredPlayerLevel: 2, weaponTypes: ["sword"], prerequisite: { id: "golpe_poderoso", level: 1 }, pointCosts: [1, 1, 2, 2, 3],
+    cooldowns: [7.5, 7.15, 6.8, 6.45, 6.1], resource: { type: "stamina", costs: [34, 33, 32, 31, 30] },
+    phases: { anticipation: .2, active: .42, recovery: .32 },
+    effects: { damageMultipliers: [1.15, 1.24, 1.33, 1.42, 1.52], radius: 88 },
+    description: "Gira com a lâmina estendida e atinge uma vez cada inimigo próximo."
+  },
+  investida: {
+    name: "Investida", classId: "warrior", kind: "active", hotkey: "Digit3", maxLevel: 5,
+    requiredPlayerLevel: 3, weaponTypes: ["sword"], prerequisite: { id: "corte_giratorio", level: 1 }, pointCosts: [1, 1, 2, 2, 3],
+    cooldowns: [6.4, 6.1, 5.8, 5.5, 5.2], resource: { type: "stamina", costs: [28, 27, 26, 25, 24] },
+    phases: { anticipation: .18, active: .28, recovery: .3 },
+    effects: { damageMultipliers: [1.35, 1.45, 1.55, 1.65, 1.78], range: 126, speed: 450, hitRadius: 38 },
+    description: "Avança com a espada à frente, parando em obstáculos e ferindo alvos no caminho."
+  },
+  treinamento_marcial: {
+    name: "Treinamento Marcial", classId: "warrior", kind: "passive", maxLevel: 5,
+    requiredPlayerLevel: 1, pointCosts: [1, 1, 2, 2, 3], weaponTypes: ["sword"],
+    effects: { damageBonuses: [.05, .08, .11, .14, .18] },
+    description: "Aumenta o dano causado enquanto uma espada estiver equipada."
+  },
+  resistencia: {
+    name: "Resistência", classId: "warrior", kind: "passive", maxLevel: 5,
+    requiredPlayerLevel: 2, pointCosts: [1, 1, 2, 2, 3],
+    effects: { armorPerLevel: 2, maxHpPerLevel: 6 },
+    description: "Fortalece o corpo, aumentando armadura e vida máxima."
+  }
 });
+
+// Configuração do jogo Canvas atualmente publicado. Novos conteúdos devem entrar
+// em AREAS/ENEMIES/ITEMS; números que alteram regras do loop ficam aqui.
+export const GAME_CONFIG = deepFreeze({
+  save: {
+    gameId: "KnightFall",
+    schemaVersion: 6,
+    primaryKey: "knightfall.save",
+    legacyKeys: ["knightfall.visual.v1", "ecosDoAbismo.save"]
+  },
+  player: {
+    defaultName: "Aldric",
+    defaultTitle: "Guardião do Vale Cinzento",
+    startPosition: { x: 430, y: 405, dirX: 1, dirY: 0 },
+    baseAttributes: { for: 5, des: 5, con: 5, int: 5, esp: 5, sor: 5 },
+    baseStats: { maxHp: 100, attack: 12, armor: 2, crit: 0, moveSpeed: 158 },
+    startingCoins: 35,
+    startingInventory: [
+      { definitionId: "pocao_menor", quantity: 2 },
+      { definitionId: "espada_enferrujada", quantity: 1 },
+      { definitionId: "armadura_couro", quantity: 1 }
+    ],
+    startingEquipment: { weapon: "espada_enferrujada" },
+    inventoryCapacity: 20
+  },
+  progression: {
+    xpBase: 120,
+    xpMultiplier: 1.42,
+    hpPerLevel: 12,
+    attackPerLevel: 2,
+    killsPerEnemyLevel: 3,
+    skillPointsPerLevel: 1
+  },
+  skills: {
+    classId: "warrior",
+    startingPoints: 1,
+    staminaMax: 100,
+    staminaRegenPerSecond: 18,
+    masteryExpPerHit: 4,
+    masteryExpDamageScale: 8,
+    masteryTargetCap: 18,
+    masteryEventCache: 256
+  },
+  combat: {
+    playerAttackDuration: .32,
+    enemyAttackDuration: .5,
+    playerHitAt: .48,
+    enemyHitAt: .46,
+    playerRange: 76,
+    enemyRange: 58,
+    enemyStopDistance: 49,
+    playerDamageVariance: [.88, 1.16],
+    minimumDamageTaken: 2,
+    invulnerabilitySeconds: .55,
+    dodgeDuration: .2,
+    dodgeCooldown: .7,
+    dodgeSpeedMultiplier: 2.85,
+    dodgeInvulnerabilitySeconds: .26,
+    enemyAttackCooldown: 1.05,
+    enemyInitialAttackDelay: .7,
+    enemyRespawnDelay: 2.2
+  },
+  goblin: {
+    names: ["Goblin Saqueador", "Goblin da Pedra", "Goblin Lâmina-Torta"],
+    spawnPositions: [[190, 165], [815, 165], [185, 350], [815, 360]],
+    hpBase: 34,
+    hpPerLevel: 11,
+    speedBase: 58,
+    speedPerLevel: 2,
+    speedLevelCap: 25,
+    attackBase: 8,
+    attackPerLevel: 2,
+    xpBase: 24,
+    xpPerLevel: 7,
+    coinBase: 8,
+    coinRandomExclusive: 8,
+    coinPerLevel: 2,
+    loot: [
+      { definitionId: "pocao_menor", chance: .18 },
+      { definitionId: "espada_curta", chance: .11 },
+      { definitionId: "espada_ferro", chance: .035, minimumEnemyLevel: 2 },
+      { definitionId: "armadura_couro", chance: .08 },
+      { definitionId: "capacete_ferro", chance: .065 },
+      { definitionId: "botas_couro", chance: .08 },
+      { definitionId: "anel_vitalidade", chance: .03, minimumEnemyLevel: 2 },
+      { definitionId: "amuleto_vigia", chance: .045 }
+    ]
+  },
+  firstCave: {
+    id: "caverna_sombria",
+    name: "Caverna Sombria",
+    totalFloors: 20,
+    tiers: [
+      {
+        id: "common", label: "Covil Goblin", minFloor: 1, maxFloor: 5, archetype: "common",
+        names: ["Goblin Saqueador", "Goblin da Pedra", "Goblin Lâmina-Torta"],
+        stats: { hpBase: 42, hpPerFloor: 7, attackBase: 8, attackPerFloor: 1.1, speed: 62 },
+        ai: { preferredDistance: 49, attackRange: 58, telegraph: .28, attackDuration: .3, recovery: .62, pattern: "slash" },
+        rewards: { xpBase: 24, xpPerFloor: 7, coinsBase: 8, coinsPerFloor: 2, coinVariance: 7, multiplier: 1 },
+        loot: [
+          { definitionId: "pocao_menor", chance: .18 }, { definitionId: "espada_curta", chance: .08 },
+          { definitionId: "armadura_couro", chance: .07 }, { definitionId: "botas_couro", chance: .06 },
+          { definitionId: "fragmento_ferro", chance: .34 }
+        ],
+        visual: { scale: 1, skin: "#9aa04b", armor: "#755038", accent: "#d9c86d", weapon: "knife" }
+      },
+      {
+        id: "warrior", label: "Posto dos Guerreiros", minFloor: 6, maxFloor: 10, archetype: "warrior",
+        names: ["Goblin Guerreiro", "Quebra-Escudos", "Lâmina Rubra"],
+        stats: { hpBase: 88, hpPerFloor: 9, attackBase: 15, attackPerFloor: 1.25, speed: 67 },
+        ai: { preferredDistance: 54, attackRange: 69, telegraph: .46, attackDuration: .36, recovery: .78, pattern: "cleave" },
+        rewards: { xpBase: 50, xpPerFloor: 8, coinsBase: 15, coinsPerFloor: 2.4, coinVariance: 10, multiplier: 1.15 },
+        loot: [
+          { definitionId: "espada_ferro", chance: .08 }, { definitionId: "capacete_ferro", chance: .1 },
+          { definitionId: "armadura_couro", chance: .11 }, { definitionId: "fragmento_ferro", chance: .42 },
+          { definitionId: "fragmento_aco", chance: .14 }
+        ],
+        visual: { scale: 1.08, skin: "#879144", armor: "#6e3530", accent: "#bec4bc", weapon: "sword" }
+      },
+      {
+        id: "archer", label: "Galerias dos Arqueiros", minFloor: 11, maxFloor: 15, archetype: "archer",
+        names: ["Goblin Arqueiro", "Olho-Amarelo", "Batedor da Caverna"],
+        stats: { hpBase: 102, hpPerFloor: 8, attackBase: 17, attackPerFloor: 1.15, speed: 73 },
+        ai: { preferredDistance: 205, retreatDistance: 125, attackRange: 310, telegraph: .62, attackDuration: .18, recovery: .86, pattern: "arrow" },
+        rewards: { xpBase: 78, xpPerFloor: 9, coinsBase: 23, coinsPerFloor: 2.8, coinVariance: 13, multiplier: 1.25 },
+        loot: [
+          { definitionId: "amuleto_vigia", chance: .1 }, { definitionId: "anel_vitalidade", chance: .07 },
+          { definitionId: "pocao_maior", chance: .12 }, { definitionId: "fragmento_ferro", chance: .2 },
+          { definitionId: "essencia", chance: .32 }
+        ],
+        visual: { scale: 1, skin: "#a3a94e", armor: "#4c4930", accent: "#c79b50", weapon: "bow" }
+      },
+      {
+        id: "elite", label: "Guarda de Elite", minFloor: 16, maxFloor: 19, archetype: "elite",
+        names: ["Campeão Goblin", "Executor da Coroa", "Guarda Negro"],
+        stats: { hpBase: 168, hpPerFloor: 17, attackBase: 23, attackPerFloor: 1.8, speed: 77 },
+        ai: { preferredDistance: 62, attackRange: 78, telegraph: .72, attackDuration: .42, recovery: .88, patterns: ["heavy", "charge"] },
+        rewards: { xpBase: 125, xpPerFloor: 12, coinsBase: 38, coinsPerFloor: 4, coinVariance: 18, multiplier: 1.55 },
+        loot: [
+          { definitionId: "espada_ferro", chance: .16 }, { definitionId: "anel_vitalidade", chance: .12 },
+          { definitionId: "pocao_maior", chance: .2 }, { definitionId: "fragmento_aco", chance: .44 },
+          { definitionId: "essencia", chance: .52 }, { definitionId: "cristal_raro", chance: .06 }
+        ],
+        visual: { scale: 1.18, skin: "#76843d", armor: "#292a28", accent: "#c25a47", weapon: "greatsword" }
+      },
+      {
+        id: "boss", label: "Salão da Coroa", minFloor: 20, maxFloor: 20, archetype: "boss",
+        names: ["Rei Goblin"],
+        stats: { hpBase: 460, hpPerFloor: 0, attackBase: 29, attackPerFloor: 0, speed: 72 },
+        ai: {
+          preferredDistance: 72, attackRange: 94, telegraph: .82, attackDuration: .48, recovery: .9,
+          phaseTwoThreshold: .45, phaseTwoSpeedMultiplier: 1.2, phaseTwoDamageMultiplier: 1.25,
+          patterns: ["heavy", "charge", "area"], areaRadius: 118, chargeSpeed: 300
+        },
+        rewards: { xpBase: 240, xpPerFloor: 0, coinsBase: 90, coinsPerFloor: 0, coinVariance: 25, multiplier: 1.8 },
+        firstVictory: { xp: 220, coins: 140, items: [{ definitionId: "coroa_rei_goblin", quantity: 1 }] },
+        loot: [
+          { definitionId: "pocao_maior", chance: .45 }, { definitionId: "anel_vitalidade", chance: .2 },
+          { definitionId: "amuleto_vigia", chance: .22 }, { definitionId: "fragmento_aco", chance: .75 },
+          { definitionId: "essencia", chance: 1 }, { definitionId: "cristal_raro", chance: .22 }
+        ],
+        visual: { scale: 1.62, skin: "#788838", armor: "#4d2020", accent: "#e0b84f", weapon: "royal_blade" }
+      }
+    ]
+  },
+  ashenGrove: {
+    id: "bosque_cinzas", name: "Bosque das Cinzas", totalFloors: 10,
+    tiers: [
+      {
+        id: "ash_beasts", label: "Trilha Carbonizada", minFloor: 1, maxFloor: 3, archetype: "common",
+        names: ["Corvo Carniceiro", "Lobo Sombrio", "Lobo das Brasas"],
+        stats: { hpBase: 118, hpPerFloor: 13, attackBase: 18, attackPerFloor: 1.6, speed: 86 },
+        ai: { preferredDistance: 48, attackRange: 60, telegraph: .34, attackDuration: .28, recovery: .55, pattern: "slash" },
+        rewards: { xpBase: 82, xpPerFloor: 10, coinsBase: 24, coinsPerFloor: 3, coinVariance: 11, multiplier: 1.2 },
+        loot: [{ definitionId: "seiva_corrompida", chance: .48 }, { definitionId: "anel_agilidade", chance: .08 }, { definitionId: "amuleto_presa", chance: .1 }],
+        visual: {
+          species: "wolf", speciesByName: { "Corvo Carniceiro": "raven" },
+          scale: 1.05, skin: "#4c4641", armor: "#302d2a", accent: "#c26a45", weapon: "fang"
+        }
+      },
+      {
+        id: "ash_cultists", label: "Círculo dos Cultistas", minFloor: 4, maxFloor: 6, archetype: "archer",
+        names: ["Cultista das Cinzas", "Portador da Brasa", "Vigia do Véu"],
+        stats: { hpBase: 148, hpPerFloor: 15, attackBase: 22, attackPerFloor: 1.8, speed: 70 },
+        ai: { preferredDistance: 215, retreatDistance: 120, attackRange: 320, telegraph: .68, attackDuration: .2, recovery: .9, pattern: "ash_bolt" },
+        rewards: { xpBase: 112, xpPerFloor: 12, coinsBase: 34, coinsPerFloor: 4, coinVariance: 14, multiplier: 1.28 },
+        loot: [{ definitionId: "cinza_viva", chance: .38 }, { definitionId: "manto_cinza", chance: .12 }, { definitionId: "espada_cinzas", chance: .07 }],
+        visual: { species: "cultist", scale: 1.05, skin: "#b49476", armor: "#3e3534", accent: "#dc7548", weapon: "staff" }
+      },
+      {
+        id: "ash_ents", label: "Coração Morto", minFloor: 7, maxFloor: 9, archetype: "elite",
+        names: ["Ente das Cinzas", "Guardião Carbonizado", "Raiz Faminta"],
+        stats: { hpBase: 225, hpPerFloor: 22, attackBase: 27, attackPerFloor: 2.2, speed: 55 },
+        ai: { preferredDistance: 68, attackRange: 86, telegraph: .78, attackDuration: .46, recovery: .92, patterns: ["heavy", "area"], areaRadius: 102 },
+        rewards: { xpBase: 155, xpPerFloor: 15, coinsBase: 48, coinsPerFloor: 5, coinVariance: 18, multiplier: 1.45 },
+        loot: [{ definitionId: "seiva_corrompida", chance: .72 }, { definitionId: "cinza_viva", chance: .58 }, { definitionId: "armadura_casca", chance: .14 }, { definitionId: "cristal_raro", chance: .05 }],
+        visual: { species: "ent", scale: 1.28, skin: "#64523c", armor: "#40382f", accent: "#d47b46", weapon: "branch" }
+      },
+      {
+        id: "rotten_stag", label: "Trono das Raízes", minFloor: 10, maxFloor: 10, archetype: "boss",
+        names: ["Cervo-Rei Putrificado"],
+        stats: { hpBase: 620, hpPerFloor: 0, attackBase: 34, attackPerFloor: 0, speed: 88 },
+        ai: { preferredDistance: 82, attackRange: 102, telegraph: .88, attackDuration: .5, recovery: .94, phaseTwoThreshold: .5, phaseTwoSpeedMultiplier: 1.18, phaseTwoDamageMultiplier: 1.28, patterns: ["heavy", "charge", "area"], areaRadius: 132, chargeSpeed: 325 },
+        rewards: { xpBase: 360, xpPerFloor: 0, coinsBase: 125, coinsPerFloor: 0, coinVariance: 30, multiplier: 1.7 },
+        firstVictoryKey: "rottenStagFirstVictory",
+        firstVictory: { xp: 300, coins: 190, items: [{ definitionId: "coroa_cervo", quantity: 1 }] },
+        loot: [{ definitionId: "seiva_corrompida", chance: 1 }, { definitionId: "cinza_viva", chance: 1 }, { definitionId: "espada_cinzas", chance: .22 }, { definitionId: "cristal_raro", chance: .2 }],
+        visual: { species: "stag", scale: 1.62, skin: "#6b6047", armor: "#392d2a", accent: "#e07845", weapon: "antlers" }
+      }
+    ]
+  },
+  regions: {
+    caverna_sombria: { name: "Caverna Sombria", order: 1, configKey: "firstCave", bossId: "rei_goblin", recommendedLevel: [1, 5], unlock: { type: "always" }, status: "playable" },
+    bosque_cinzas: { name: "Bosque das Cinzas", order: 2, configKey: "ashenGrove", bossId: "cervo_putrido", recommendedLevel: [5, 9], unlock: { type: "boss", bossId: "rei_goblin", label: "Derrote o Rei Goblin" }, status: "playable" },
+    montanhas_lamento: { name: "Montanhas do Lamento", order: 3, recommendedLevel: [9, 12], unlock: { type: "regionBoss", regionId: "bosque_cinzas" }, status: "planned" },
+    catacumbas_esquecidas: { name: "Catacumbas Esquecidas", order: 4, recommendedLevel: [13, 16], unlock: { type: "regionBoss", regionId: "montanhas_lamento" }, status: "planned" },
+    fortaleza_eclipse: { name: "Fortaleza do Eclipse", order: 5, recommendedLevel: [17, 20], unlock: { type: "regionBoss", regionId: "catacumbas_esquecidas" }, status: "planned" }
+  },
+  economy: {
+    potionPrice: 15,
+    restPrice: 8,
+    attackUpgrade: { basePrice: 65, priceStep: 28, amount: 3 },
+    armorUpgrade: { basePrice: 70, priceStep: 32, amount: 2 },
+    defeatCoinLossRatio: .2,
+    defeatMinimumCoinLoss: 5,
+    merchantEquipment: ["espada_curta", "capacete_ferro", "botas_couro"],
+    enhancedSaleCostRatio: .18
+  },
+  forge: {
+    maxLevel: 10,
+    defaultStatGrowth: .1,
+    statGrowthBySlot: {
+      weapon: { attack: .12, crit: .06 },
+      helmet: { armor: .12, maxHp: .1 },
+      chest: { armor: .12, maxHp: .1 },
+      boots: { armor: .1, maxHp: .08, moveSpeed: .04 },
+      ring: { maxHp: .1, attack: .1, armor: .1, crit: .08, moveSpeed: .04 },
+      amulet: { maxHp: .1, attack: .1, armor: .1, crit: .08, moveSpeed: .04 }
+    },
+    costs: {
+      1: { gold: 30, materials: { fragmento_ferro: 2 } },
+      2: { gold: 45, materials: { fragmento_ferro: 2 } },
+      3: { gold: 65, materials: { fragmento_ferro: 3 } },
+      4: { gold: 90, materials: { fragmento_ferro: 3, fragmento_aco: 1 } },
+      5: { gold: 120, materials: { fragmento_ferro: 4, fragmento_aco: 2 } },
+      6: { gold: 155, materials: { fragmento_ferro: 5, fragmento_aco: 3 } },
+      7: { gold: 195, materials: { fragmento_aco: 4, essencia: 2 } },
+      8: { gold: 240, materials: { fragmento_aco: 5, essencia: 3, seiva_corrompida: 2 } },
+      9: { gold: 295, materials: { fragmento_aco: 6, essencia: 4, cinza_viva: 2, cristal_raro: 1 } },
+      10: { gold: 360, materials: { fragmento_aco: 8, essencia: 6, seiva_corrompida: 4, cinza_viva: 3, cristal_raro: 2 } }
+    }
+  }
+});
+
+function deepFreeze(value) {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+  Object.values(value).forEach(deepFreeze);
+  return Object.freeze(value);
+}

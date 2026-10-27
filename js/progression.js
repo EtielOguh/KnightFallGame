@@ -1,4 +1,4 @@
-import { AREAS, ENEMIES, ITEMS } from "./data.js";
+import { AREAS, ENEMIES, GAME_CONFIG, ITEMS } from "./data.js";
 
 export const BALANCE = Object.freeze({
   MAX_OFFLINE_SECONDS: 8 * 60 * 60,
@@ -8,14 +8,14 @@ export const BALANCE = Object.freeze({
   AUTO_FARM_EFFICIENCY: 0.9,
   MASTERY_MAX_LEVEL: 100,
   MASTERY_DAMAGE_PER_LEVEL: 0.012,
-  PLAYER_XP_BASE: 150,
-  PLAYER_XP_EXPONENT: 1.7,
+  PLAYER_XP_BASE: GAME_CONFIG.progression.xpBase,
+  PLAYER_XP_MULTIPLIER: GAME_CONFIG.progression.xpMultiplier,
   ENEMY_XP_BASE: 10,
   ENEMY_XP_EXPONENT: 1.15,
   ENCOUNTER_DELAY: 3,
   NORMAL_EQUIPMENT_DROP_MULTIPLIER: 0.65,
   POTION_DROP_RATES: { pocao_menor: 0.06, pocao_maior: 0.015, pocao_suprema: 0.0025 },
-  EQUIPMENT_RARITY_WEIGHTS: { comum: 0.68, incomum: 0.22, raro: 0.07, épico: 0.024, lendário: 0.0055, mítico: 0.0005 }
+  EQUIPMENT_RARITY_WEIGHTS: { comum: 0.68, incomum: 0.22, raro: 0.07, épico: 0.025, lendário: 0.005 }
 });
 
 export const WEAPON_TYPES = Object.freeze({
@@ -34,8 +34,28 @@ export function createWeaponMastery() {
 }
 
 export function masteryExpRequired(level) { return Math.round(100 * Math.pow(level, 1.45)); }
-export function playerExpRequired(level) { return Math.round(BALANCE.PLAYER_XP_BASE * Math.pow(level, BALANCE.PLAYER_XP_EXPONENT)); }
+export function playerExpRequired(level) {
+  const safeLevel = Math.max(1, Math.floor(Number(level) || 1));
+  return Math.round(BALANCE.PLAYER_XP_BASE * Math.pow(BALANCE.PLAYER_XP_MULTIPLIER, safeLevel - 1));
+}
 export function masteryDamageMultiplier(level) { return 1 + level * BALANCE.MASTERY_DAMAGE_PER_LEVEL; }
+
+export function grantPlayerExperience(player, amount) {
+  const gained = Math.max(0, Number(amount) || 0);
+  player.xp = Math.max(0, Number(player.xp) || 0) + gained;
+  let levels = 0;
+  while (player.xp >= playerExpRequired(player.level)) {
+    player.xp -= playerExpRequired(player.level);
+    player.level += 1;
+    player.baseStats.maxHp += GAME_CONFIG.progression.hpPerLevel;
+    player.baseStats.attack += GAME_CONFIG.progression.attackPerLevel;
+    player.attributes.for += 1;
+    player.attributes.con += 1;
+    if (player.skillProgression) player.skillProgression.points += GAME_CONFIG.progression.skillPointsPerLevel;
+    levels += 1;
+  }
+  return { gained, levels, level: player.level, xp: player.xp, xpToNext: playerExpRequired(player.level) };
+}
 
 export function addMasteryExp(mastery, amount, trainingSeconds = 0) {
   const before = mastery.level;

@@ -4,9 +4,16 @@ class GameAudio {
     this.timer = null;
     this.step = 0;
     this.mode = null;
+    this.enabled = true;
+  }
+
+  setEnabled(enabled) {
+    this.enabled = Boolean(enabled);
+    if (!this.enabled) this.stopMusic();
   }
 
   ensureContext() {
+    if (!this.enabled) return null;
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     if (!AudioContext) return null;
     this.context ??= new AudioContext();
@@ -39,17 +46,20 @@ class GameAudio {
   }
 
   tone(frequency, volume, duration, type) {
-    const now = this.context.currentTime;
-    const oscillator = this.context.createOscillator();
-    const gain = this.context.createGain();
+    const context = this.ensureContext();
+    if (!context) return false;
+    const now = context.currentTime;
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
     oscillator.type = type;
     oscillator.frequency.value = frequency;
     gain.gain.setValueAtTime(.0001, now);
     gain.gain.exponentialRampToValueAtTime(volume, now + .015);
     gain.gain.exponentialRampToValueAtTime(.0001, now + duration);
-    oscillator.connect(gain).connect(this.context.destination);
+    oscillator.connect(gain).connect(context.destination);
     oscillator.start(now);
     oscillator.stop(now + duration + .02);
+    return true;
   }
 
   stopMusic() {
