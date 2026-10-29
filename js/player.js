@@ -6,7 +6,7 @@ const ATTRIBUTE_KEYS = ["for", "des", "con", "int", "esp", "sor"];
 const STAT_KEYS = ["maxHp", "attack", "armor", "crit", "moveSpeed"];
 const EQUIPMENT_SLOT_KEYS = Object.keys(EQUIPMENT_SLOTS);
 
-export const ORIGINS = Object.freeze({
+const ORIGINS = Object.freeze({
   1: { id: "mercenario", name: "Mercenário", description: "+2 FOR, +1 CON", bonuses: { for: 2, con: 1 } },
   2: { id: "cacador", name: "Caçador", description: "+2 DES, +1 SOR", bonuses: { des: 2, sor: 1 } },
   3: { id: "erudito", name: "Erudito", description: "+2 INT, +1 ESP", bonuses: { int: 2, esp: 1 } },
@@ -135,7 +135,7 @@ export function inventoryCount(player, definitionId) {
 
 export function inventoryUsed(player) { return Array.isArray(player.inventory) ? player.inventory.length : 0; }
 export function inventoryCapacity(player) { return toInt(player.bag?.capacity, GAME_CONFIG.player.inventoryCapacity, 1, 10000); }
-export function isInventoryFull(player) { return inventoryUsed(player) >= inventoryCapacity(player); }
+function isInventoryFull(player) { return inventoryUsed(player) >= inventoryCapacity(player); }
 export function getInventoryEntry(player, uid) { return player.inventory?.find(entry => entry.uid === uid) || null; }
 export function getEquippedEntry(player, slot) { return getInventoryEntry(player, player.equipment?.[slot]); }
 
@@ -231,7 +231,7 @@ function normalizeMastery(raw) {
   const defaults = createWeaponMastery();
   for (const [type, fallback] of Object.entries(defaults)) {
     const mastery = raw?.[type];
-    defaults[type] = { level: toInt(mastery?.level, fallback.level, 1, 100), exp: finite(mastery?.exp, fallback.exp, 0, 1e12), totalTrainingTime: finite(mastery?.totalTrainingTime, fallback.totalTrainingTime, 0, 1e12) };
+    defaults[type] = { level: toInt(mastery?.level, fallback.level, 1, 100), exp: finite(mastery?.exp, fallback.exp, 0, 1e12) };
   }
   return defaults;
 }

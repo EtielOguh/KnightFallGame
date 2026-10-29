@@ -20,7 +20,7 @@ index.html
     └── music.js            áudio procedural
 ```
 
-`terminal.js` pertence à interface textual anterior e não é carregado. Ele permanece no repositório apenas como referência enquanto funcionalidades úteis da versão anterior são adaptadas. Nenhuma regra do jogo Canvas depende dele.
+A interface textual anterior foi removida do repositório. Sua compatibilidade de save permanece isolada nas migrações de `save.js`; nenhuma regra do jogo Canvas depende da apresentação antiga.
 
 ## Resultado da auditoria
 
@@ -29,14 +29,14 @@ Antes da consolidação, `game.js` mantinha sozinho um personagem plano, áudio 
 Foram reaproveitados:
 
 - os catálogos de regiões, inimigos, itens, conjuntos e habilidades de `data.js`, ativados gradualmente pelas interfaces atuais;
-- a curva de progressão, domínio de armas e simuladores de `progression.js`, agora ligados ao mesmo modelo de jogador;
+- a curva de progressão e o domínio de armas de `progression.js`, agora ligados ao mesmo modelo de jogador;
 - as instâncias de inventário com `uid`, níveis de equipamento e slots da camada antiga;
 - o sintetizador procedural de `music.js`;
 - os dois formatos de save anteriores, agora tratados como fontes de migração.
 
 Foram removidas da execução as duplicações de `freshState`, `nextXp`, contador isolado de poções, atributos `damage/armor` concorrentes, acesso direto ao `localStorage` e segundo contexto de áudio em `game.js`.
 
-Permanecem intencionalmente inativos, mas reutilizáveis, o conteúdo avançado de `data.js` e as rotinas de treino/auto-farm de `progression.js`. `terminal.js` é código legado de apresentação e não deve voltar ao grafo do jogo Canvas.
+O schema 9 removeu do estado canônico treino offline, auto-farm, pity e campos de navegação da interface antiga. A migração continua aceitando esses dados como entrada, converte o histórico de chefes e descarta o restante sem regravá-lo.
 
 ## Responsabilidades
 
@@ -46,7 +46,7 @@ Permanecem intencionalmente inativos, mas reutilizáveis, o conteúdo avançado 
 | `data.js` | Catálogos futuros e `GAME_CONFIG` | Mutação de estado e acesso ao DOM |
 | `state.js` | Criação, normalização, validação e snapshot seguro do estado raiz | Renderização e `localStorage` |
 | `player.js` | Modelo do personagem, inventário, equipamentos e cálculo único de atributos efetivos | HUD, IA ou persistência |
-| `progression.js` | Curvas de XP, level-up, domínio e simulações | Estado global |
+| `progression.js` | Curvas de XP, level-up e domínio | Estado global |
 | `save.js` | Envelope versionado, leitura, gravação, fallback e migrações | Regras de combate |
 | `dungeon.js` | Configuração regional, desbloqueios, encontros, avanço e recompensa única | DOM, Canvas e estado global |
 | `farm.js` | Runtime transitório e testável de ondas, limites, IDs e idempotência por inimigo | Save, DOM ou regras de item |
@@ -89,10 +89,12 @@ state
 │   │       ├── floorObjectivesCompleted
 │   │       ├── floorCompletions
 │   │       ├── bossVictories
-│   │       └── uniqueRewardsClaimed
-│   └── bossesDefeated          legado neutralizado; não é fonte de gameplay
+│   │       ├── uniqueRewardsClaimed
+│   │       └── expedition             incursão temporária ativa ou null
+│   │           ├── id, regionId, floor, state
+│   │           ├── floorKills, farmKills, completedFloors
+│   │           └── bossUnlocked, bossSpawned, bossDefeated, completed
 ├── settings                    áudio
-├── systems                     sessões futuras/legadas
 ├── flags
 └── metadata
 ```
@@ -101,13 +103,13 @@ Valores efetivos de combate nunca são copiados para a interface. `calculateStat
 
 ### Habilidades e maestria
 
-`SKILLS` em `data.js` é a fonte única de requisitos, níveis máximos, custos em pontos, cooldowns, vigor, fases e efeitos. `player.skillProgression` guarda apenas classe, pontos e níveis aprendidos; `player.resources` guarda o vigor. Cooldowns e a habilidade em execução pertencem a `skillRuntime` em `game.js` e não entram no save.
+`SKILLS` em `data.js` é a fonte única de requisitos, níveis máximos, custos em pontos, cooldowns, vigor, fases e efeitos. Habilidades ativas também podem exigir maestria da arma. O primeiro ponto chega no nível 3 e os seguintes em níveis alternados, conforme `GAME_CONFIG.progression`; esse cálculo não é duplicado na interface. `player.skillProgression` guarda apenas classe, pontos e níveis aprendidos; `player.resources` guarda o vigor. Cooldowns e a habilidade em execução pertencem a `skillRuntime` em `game.js` e não entram no save.
 
 As técnicas usam as fases `anticipation`, `active`, `recovery` e `complete`. A esquiva pode cancelar somente `anticipation`; o vigor permanece gasto e o cooldown continua. Depois da janela ativa começar, movimento, ataque básico e outras habilidades permanecem bloqueados até a recuperação terminar. Receber dano não cancela a técnica. Cada execução mantém `hitTargets`, garantindo um único dano por alvo e evento.
 
 `Golpe Poderoso` usa cone frontal, `Corte Giratório` usa raio próximo e `Investida` desloca o jogador pelas mesmas colisões de cenário do movimento normal, até seu alcance máximo. A arte dessas ações é desenhada no Canvas com poses de espada próprias para antecipação, movimento e recuperação.
 
-A maestria identifica o tipo da arma equipada e recebe experiência apenas em `applyPlayerDamage`, após dano positivo. IDs de evento impedem repetição e cada inimigo possui teto configurável em `GAME_CONFIG.skills.masteryTargetCap`. O multiplicador de maestria e `Treinamento Marcial` entram no cálculo final do dano; `Resistência` entra uma única vez no bloco `passive` do cálculo de atributos.
+A maestria identifica o tipo da arma equipada e recebe experiência apenas em `applyPlayerDamage`, após dano positivo. IDs de evento impedem repetição, cada inimigo possui teto configurável em `GAME_CONFIG.skills.masteryTargetCap` e a curva `250 × nível^1,55` torna os próximos graus deliberadamente mais lentos. O multiplicador de maestria e `Treinamento Marcial` entram no cálculo final do dano; `Resistência` entra uma única vez no bloco `passive` do cálculo de atributos.
 
 Para adicionar uma habilidade futura, inclua sua definição com `classId` e `kind` em `SKILLS`, adicione o comportamento ativo ao executor de combate quando necessário e uma representação procedural em `drawSkillIcon`/`drawPlayerSkillAnimation`. A estrutura já aceita novos `classId`, mas somente `warrior` está disponível.
 
@@ -147,7 +149,7 @@ O nível de reforço pertence à instância (`inventory[].enhancementLevel`), li
 
 `GAME_CONFIG.forge.costs` é a fonte única do ouro e materiais necessários para cada próximo nível. Os seis materiais ativos são `fragmento_ferro` (Minério de Ferro), `fragmento_aco`, `essencia` (Essência Goblin), `seiva_corrompida`, `cinza_viva` e `cristal_raro`; todos aparecem em custos e em tabelas de loot das regiões jogáveis.
 
-`forge.js` valida a operação inteira antes de alterar recursos. Reforço, compra e venda aceitam um identificador de transação para rejeitar reenvios na mesma sessão. A interface também bloqueia o botão enquanto a operação está sendo confirmada e grava o save imediatamente após o sucesso. Itens equipados não podem ser vendidos. O valor de uma peça reforçada recupera uma fração configurável do investimento por meio de `calculateSalePrice`.
+`forge.js` valida a operação inteira antes de alterar recursos. Reforço, compra e venda aceitam um identificador de transação para rejeitar reenvios na mesma sessão. A interface também bloqueia o botão enquanto a operação está sendo confirmada e grava o save imediatamente após o sucesso. Itens equipados não podem ser vendidos. `getSaleReturn` calcula o retorno canônico: peças comuns geram principalmente ouro e raridades superiores recuperam minério/cristal segundo `economy.salvageByRarity`. A capacidade para todos os materiais é validada antes de remover a peça, portanto uma mochila cheia não causa perda parcial. O valor de uma peça reforçada recupera uma fração configurável do investimento por meio de `calculateSalePrice`.
 
 Para adicionar um novo material, defina-o em `ITEMS`, use-o em ao menos um nível de `GAME_CONFIG.forge.costs` e inclua uma fonte configurável de loot. Para adicionar um equipamento à loja, inclua seu `definitionId` em `GAME_CONFIG.economy.merchantEquipment`; `buyPrice` pode ser informado ou derivado do valor de venda.
 
@@ -165,19 +167,36 @@ Contagens de itens são obtidas do inventário com `inventoryCount`; não existe
 
 O encontro ativo, `farmRuntime`, inimigos, estados de IA, projéteis, timers, teclas, partículas e efeitos são transitórios e não entram no save. Cada inimigo recebe ID, estado, animação de morte e trava de recompensa próprios. Projéteis carregam `ownerId`; o limite configurável impede crescimento sem controle. A fila de IDs recompensados mantém no máximo 512 entradas por sessão.
 
-## Caverna Sombria
+## Incursões de cave
 
-`GAME_CONFIG.firstCave` é a fonte única das 20 etapas e do farm contínuo. `farm.unlockKills` define a meta de cada andar; `farm.bands` define tamanho da onda, teto ativo, orçamento de ameaça e pesos de papéis; `farm.roles` aplica variações comum, rápida, resistente, distante e elite sem duplicar a IA. `createWavePlan` e `createEncounterSpec` transformam esses dados em ondas e atores.
+Cada região jogável possui dez andares e configuração independente em `data.js`. `farm.floorRules` é a fonte única de eliminações, tamanho de onda, teto simultâneo e multiplicadores de vida/ataque/defesa; `farm.bands` define orçamento e composição; `farm.roles` aplica variações comum, rápida, resistente, arqueiro, arremessador e elite sem duplicar IA. `boss` permanece separado das faixas comuns, portanto nunca surge por uma rolagem normal de onda.
 
-- 1–5: comuns, perseguição e corte simples;
-- 6–10: guerreiros, golpe amplo e recuperação mais longa;
-- 11–15: arqueiros, distância preferida, recuo e projétil com colisão;
-- 16–19: elites, golpe pesado e investida sinalizados;
-- 20: Rei Goblin, golpe pesado, investida, área, fase 2 e animação de derrota.
+Na tabela inicial, as metas são `8, 9, 10, 11, 12, 13, 14, 15, 16, 20` — 128 eliminações comuns por incursão. As ondas crescem de 2–3 para 5–6 atores e o teto vivo de 3 para 6. `createEncounterSpec` aplica o multiplicador somente à nova instância; as definições-base congeladas não são alteradas nem acumulam escalas após recriação/save.
+
+O ciclo explícito de `expedition.state` é:
+
+```text
+ACTIVE → FLOOR_COMPLETED ── avançar ──→ ACTIVE/BOSS_PREPARATION
+                 └──────── permanecer → FARMING ── avançar ──┘
+BOSS_PREPARATION → BOSS_PENDING → BOSS_ACTIVE → CAVE_COMPLETED
+```
+
+Ao concluir os andares 1–9, novos spawns param, inimigos restantes continuam e o HUD oferece `Avançar` e `Permanecer` sem pausar a partida. Permanecer registra abates extras em `farmKills`, sem repetir conclusão; avançar continua disponível. No andar 10, 20 mortes comuns levam a `BOSS_PENDING`; somente quando a lista de ameaças fica vazia `markBossSpawned` arma uma única entidade do chefe. Depois da vitória, nenhum spawn é permitido e a saída encerra a incursão. A próxima entrada cria outro ID e começa no andar 1.
+
+Na Caverna Sombria:
+
+- 1–2: comuns e rápidos;
+- 3–4: arremessadores de pedra;
+- 5–6: resistentes e composições mistas;
+- 7–8: arqueiros e controle de distância;
+- 9–10: elites e até dois atacantes à distância;
+- após 20 abates no andar 10: Rei Goblin com golpe pesado, investida, área e fase 2.
 
 A IA usa os estados `patrol`, `chase`, `telegraph`, `attack`, `recover`, `hurt` e `dying`. A navegação mantém linha direta, A* e deslizamento por obstáculos. O orçamento de A* limita recálculos por quadro e cada ator recebe um intervalo de replanejamento; separação física impede empilhamento. Todo ataque perigoso passa por `telegraph`; a direção é travada no começo da preparação para oferecer uma janela real de reação.
 
-Ao morrer, somente o inimigo recebe a trava de recompensa antes de XP, moedas e loot. O abate é salvo antes do fim da animação; matar outro ator não apaga seus projéteis nem encerra a sessão. Ao atingir a meta, o próximo andar é desbloqueado, mas `selectedFloor` não muda: o jogador permanece farmando até sair e escolher outro andar no mapa. O Rei Goblin reaparece após uma pausa, contabiliza vitórias repetíveis e mantém a recompensa única protegida. As metas provisórias são 5–8, 8–12, 12–18 e 18–25 abates nas quatro faixas, mais uma vitória no andar 20.
+Cada ator carrega `regionId`, `expeditionId`, andar e ID de entidade. `recordFloorKill` recusa entidades de outra sessão; `claimEnemyReward` impede repetição do mesmo ID. A recompensa só é entregue depois dessa validação. Inimigos que já estavam vivos ao completar a meta ainda concedem seus drops normais, mas não repetem a conclusão.
+
+`loot.js` mantém consumíveis e materiais como rolagens independentes, mas agrupa todos os equipamentos em um único canal ponderado. Assim, um inimigo nunca concede duas peças simultaneamente, e as chances de equipamento ficam separadas das fontes necessárias à forja.
 
 ## Regiões e Bosque das Cinzas
 
@@ -185,16 +204,16 @@ Ao morrer, somente o inimigo recebe a trava de recompensa antes de XP, moedas e 
 
 Cada região possui um registro próprio em `world.regionProgress`; selecionar outra região nunca copia ou reinicia o progresso anterior. A antiga `world.caveProgress` é aceita somente pela migração e convertida para `regionProgress.caverna_sombria`. O runtime mantém a cena interna `cave` por compatibilidade, mas cenário, obstáculos, encontros, loot e chefe vêm de `currentRegionId`.
 
-O Bosque das Cinzas é a segunda região completa, desbloqueada por `regionProgress.caverna_sombria.bossVictories`. Seus dez estágios continuam com o fluxo anterior de um encontro e avanço explícito; o farm contínuo deste pacote está habilitado somente em `firstCave.farm.continuous`. Isso evita expandir ou rebalancear antecipadamente a segunda região. Montanhas do Lamento, Catacumbas Esquecidas e Fortaleza do Eclipse permanecem apenas no catálogo.
+O Bosque das Cinzas é a segunda região completa, desbloqueada por `regionProgress.caverna_sombria.bossVictories`. Ele usa o mesmo motor de dez andares e estados, mas possui papéis, composição, atributos-base, cenário, loot e Cervo-Rei próprios. Montanhas do Lamento, Catacumbas Esquecidas e Fortaleza do Eclipse permanecem apenas no catálogo.
 
 ## Save e migração
 
-O formato atual usa a chave `knightfall.save`, envelope versão 7:
+O formato atual usa a chave `knightfall.save`, envelope versão 9:
 
 ```json
 {
   "game": "KnightFall",
-  "version": 7,
+  "version": 9,
   "savedAt": "ISO-8601",
   "state": {}
 }
@@ -206,9 +225,9 @@ A leitura tenta, nesta ordem:
 2. `knightfall.visual.v1`, usado pelo protótipo Canvas;
 3. `ecosDoAbismo.save`, usado pela interface textual antiga.
 
-Cada formato possui migração explícita antes de `normalizeGameState`. A versão 7 converte `currentExpeditionFloor` em `selectedFloor`, cria abates e objetivos por andar e reconhece como concluídos todos os andares que um save antigo já havia desbloqueado. `bossesDefeated` antigo é importado para `bossVictories` da região correspondente e depois neutralizado, eliminando a fonte duplicada. Nível, XP, moedas, inventário, UIDs, equipamento e reforços são preservados. Valores inválidos são limitados e saves futuros são recusados.
+Cada formato possui migração explícita antes de `normalizeGameState`. A versão 8 inicia `expedition: null`, pois contadores antigos de 20 andares não descrevem com segurança uma incursão nova de dez. A versão 9 importa `bossesDefeated` antigo para `bossVictories` e deixa de persistir `bossesDefeated`, `bossPity`, `currentArea` e sessões offline. Nível, XP, moedas, inventário, UIDs, equipamento e reforços são preservados; valores inválidos são limitados e saves futuros são recusados.
 
-O snapshot sempre retorna o personagem à Clareira ao continuar, preservando a regra anterior de não restaurar uma luta no meio.
+O snapshot atual preserva cena, andar, contadores e estado da incursão. Entidades vivas não são serializadas. Se um save/saída/morte descarregar um chefe em `BOSS_ACTIVE`, `prepareExpeditionAfterLoad` o rearma como `BOSS_PENDING`; ele retorna com vida cheia e uma única instância, sem repetir uma recompensa já registrada. HP zero usa retorno seguro à vila, mas conserva a incursão para retomada.
 
 ## Regras permanentes de combate
 
@@ -230,4 +249,4 @@ O snapshot sempre retorna o personagem à Clareira ao continuar, preservando a r
 
 ## Verificação
 
-`npm test` cobre estado inicial, validação, curva de XP, equipamentos, inventário, loot, forja, habilidades, cooldown, vigor, fases, colisões, passivas, proteção da maestria, persistência e migração. O fluxo visual e os controles também recebem smoke test no navegador após alterações em `game.js`.
+`npm test` cobre estado inicial, validação, curva de XP, equipamentos, inventário, loot, forja, habilidades e, para caves, tabela exata de 128 abates, multiplicadores não cumulativos, IDs válidos, permanecer/avançar, espera de ameaças, invocação única, conclusão, reentrada, independência regional, loot preservado e recuperação de todos os estados críticos. O fluxo visual também recebe smoke test real no navegador após alterações em `game.js`.

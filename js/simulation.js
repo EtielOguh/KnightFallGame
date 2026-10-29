@@ -1,7 +1,7 @@
 import { GAME_CONFIG, ITEMS } from "./data.js";
 import {
-  createEncounterSpec, createWavePlan, getFloorFarmConfig, getFloorUnlockTarget,
-  getRegionConfig, grantEncounterRewards, recordFloorKill
+  advanceCaveFloor, createEncounterSpec, createWavePlan, getFloorFarmConfig, getFloorUnlockTarget,
+  getRegionConfig, grantEncounterRewards, markBossSpawned, recordFloorKill, startNewCaveExpedition
 } from "./dungeon.js";
 import { enhanceEquipment, purchaseEquipment } from "./forge.js";
 import {
@@ -30,10 +30,11 @@ export const PROGRESSION_HYPOTHESES = Object.freeze({
   firstReward: [0, 180],
   firstLevelOrUpgrade: [180, 420],
   firstEquipmentChange: [420, 720],
-  firstForge: [720, 1200],
-  // Com 122–151 abates até a faixa avançada, 35–50 min é a hipótese inicial
-  // compatível com o novo objetivo de farm prolongado.
-  firstElite: [2100, 3000]
+  // A economia mais restrita desloca o primeiro reforço para depois da primeira
+  // troca de equipamento; é uma hipótese de 20–30 min, não uma garantia.
+  firstForge: [1200, 1800],
+  // Na incursão de 10 andares, elites entram nos andares 9–10.
+  firstElite: [1200, 1800]
 });
 
 export function createSeededRandom(seed = 1) {
@@ -57,6 +58,7 @@ export function simulateProgression(options = {}) {
   const state = createInitialState({ id: `sim_player_${seed}` });
   const player = state.player;
   const progress = state.world.regionProgress[regionId];
+  const expedition = startNewCaveExpedition(progress, config, { id: `simulation_${regionId}_${seed}` });
   const initialStats = calculateStats(player);
   const initialWeaponUid = player.equipment.weapon;
   const metrics = {
@@ -67,16 +69,22 @@ export function simulateProgression(options = {}) {
   };
   let floor = 1;
   let retries = 0;
-  const requiredVictories = Array.from({ length: config.totalFloors }, (_, index) => getFloorUnlockTarget(index + 1, config)).reduce((sum, amount) => sum + amount, 0);
+  const requiredVictories = Array.from({ length: config.totalFloors }, (_, index) => getFloorUnlockTarget(index + 1, config)).reduce((sum, amount) => sum + amount, 1);
   const maxFights = Math.max(requiredVictories, Math.floor(options.maxFights || requiredVictories * 1.8));
 
   while (floor <= config.totalFloors && metrics.fights < maxFights) {
     const targetKills = getFloorUnlockTarget(floor, config);
     let floorKills = 0;
+    let bossDefeated = false;
     let wave = [];
-    while (floorKills < targetKills && metrics.fights < maxFights) {
+    while ((floorKills < targetKills || floor === config.totalFloors && !bossDefeated) && metrics.fights < maxFights) {
       if (!wave.length) {
-        wave = createWavePlan(floor, config, random);
+        if (floor === config.totalFloors && floorKills >= targetKills) {
+          markBossSpawned(progress, config);
+          wave = ["boss"];
+        } else {
+          wave = createWavePlan(floor, config, random);
+        }
         metrics.waves += 1;
       }
       const roleId = wave.shift();
@@ -107,7 +115,8 @@ export function simulateProgression(options = {}) {
 
       retries = 0;
       metrics.victories += 1;
-      floorKills += 1;
+      if (spec.boss) bossDefeated = true;
+      else floorKills += 1;
       metrics.killsByFloor[floor] = floorKills;
       player.progression.kills += 1;
       const reward = grantEncounterRewards(progress, spec, random);
@@ -127,7 +136,11 @@ export function simulateProgression(options = {}) {
       }
 
       collectDrops(player, [...reward.loot, ...bonus.items], metrics);
-      recordFloorKill(progress, floor, config, { boss: spec.boss });
+      recordFloorKill(progress, floor, config, {
+        boss: spec.boss,
+        expeditionId: expedition.id,
+        regionId
+      });
       if (spec.boss) {
         metrics.boss = {
           floor, killSeconds: combat.killSeconds, damageTaken: combat.damageTaken,
@@ -143,8 +156,9 @@ export function simulateProgression(options = {}) {
         player.hp = calculateStats(player).maxHp;
       }
     }
-    if (floorKills < targetKills) break;
+    if (floorKills < targetKills || floor === config.totalFloors && !bossDefeated) break;
     metrics.unlockSeconds[floor] = round(metrics.elapsedSeconds);
+    if (floor < config.totalFloors) advanceCaveFloor(progress, floor, config);
     floor += 1;
     metrics.elapsedSeconds += profile.explorationSeconds * (.9 + random() * .2);
 
@@ -257,9 +271,9 @@ function useEmergencyPotions(player, metrics) {
 }
 
 function visitVillage(player, metrics, profile, initialWeaponUid) {
-  buyBestMerchantUpgrade(player, metrics);
   equipBestOwnedItems(player, metrics, initialWeaponUid);
   if (metrics.victories >= profile.forgeEvery) reinforceWeapon(player, metrics);
+  buyBestMerchantUpgrade(player, metrics);
   if (player.progression.upgrades.attack < GAME_CONFIG.economy.attackUpgrade.maxPurchases && player.coins >= attackUpgradePrice(player)) {
     const cost = attackUpgradePrice(player);
     player.coins -= cost;

@@ -1,8 +1,10 @@
 import { EQUIPMENT_SLOTS, GAME_CONFIG, ITEMS, RARITIES, SKILLS } from "./data.js";
 import {
-  abandonCaveExpedition, beginCaveExpedition, createEncounterSpec, ENEMY_STATES,
-  getFloorUnlockTarget, getRegionConfig, grantEncounterRewards, recordFloorKill,
-  regionUnlockStatus, selectCaveFloor
+  abandonCaveExpedition, advanceCaveFloor, beginCaveExpedition, canSpawnCommonEnemies,
+  createEncounterSpec, ENEMY_STATES, EXPEDITION_STATES, finishCaveExit,
+  getFloorAdvanceState, getFloorUnlockTarget, getRegionConfig, grantEncounterRewards,
+  markBossSpawned, prepareExpeditionAfterLoad, recordFloorKill, regionUnlockStatus,
+  startNewCaveExpedition, stayOnCompletedFloor
 } from "./dungeon.js";
 import {
   addOwnedProjectile, claimEnemyReward, createFarmRuntime, updateFarmSpawner
@@ -21,7 +23,7 @@ import {
 } from "./skills.js";
 import {
   calculateSalePrice, canEnhanceEquipment, enhanceEquipment, getEnhancementPreview,
-  purchaseEquipment, sellEquipment
+  getSaleReturn, purchaseEquipment, sellEquipment
 } from "./forge.js";
 import { hasSave as hasStoredSave, loadGame as restoreGame, saveGame as persistGame } from "./save.js";
 import { createInitialState } from "./state.js";
@@ -36,14 +38,16 @@ const ui = Object.fromEntries([
   "level-value", "hp-text", "hp-bar", "xp-bar", "attack-stat", "armor-stat", "kills-stat",
   "potion-count", "coin-count", "potion-button", "cave-progress", "objective-title",
   "objective-detail", "location-badge", "interaction-prompt", "interaction-text", "enemy-hud",
+  "objective-progress", "objective-floor", "objective-kills", "objective-actions",
+  "floor-advance-button", "floor-stay-button", "floor-exit-button",
   "enemy-name", "enemy-phase", "enemy-hp-text", "enemy-hp-bar", "toast", "merchant-dialog", "merchant-coins",
-  "damage-price", "armor-price", "death-dialog", "return-button", "sound-button",
+  "damage-price", "armor-price", "potion-price", "rest-price", "death-dialog", "return-button", "sound-button",
   "fullscreen-button", "viewport", "save-status", "inventory-button", "inventory-summary",
   "inventory-dialog", "inventory-capacity", "inventory-stats", "equipment-slots",
   "inventory-grid", "inventory-empty", "item-detail", "item-tooltip", "cave-floor-badge",
-  "cave-floor-value", "encounter-dialog", "encounter-kicker", "encounter-title",
-  "encounter-summary", "encounter-rewards", "advance-floor-button", "leave-cave-button",
-  "merchant-equipment-grid", "merchant-forge-button", "forge-dialog", "forge-close-button",
+  "cave-floor-value",
+  "merchant-equipment-grid", "merchant-forge-button", "merchant-sale-grid", "merchant-sale-preview",
+  "merchant-sell-button", "forge-dialog", "forge-close-button",
   "forge-coins", "forge-materials", "forge-equipment-list", "forge-empty", "forge-preview",
   "forge-rarity", "forge-name", "forge-level", "forge-stats", "forge-cost", "forge-message",
   "forge-button", "forge-sell-button", "skill-hotbar", "stamina-bar", "stamina-text",
@@ -78,6 +82,8 @@ let selectedInventoryUid = null;
 let selectedForgeUid = null;
 let forgeBusy = false;
 let merchantBusy = false;
+let selectedMerchantSaleUid = null;
+let pendingFloorAdvance = false;
 let forgeEffectTimer = 0;
 let skillRuntime = createSkillRuntime();
 let masteryTracker = createMasteryTracker();
@@ -130,6 +136,7 @@ function clearEncounterRuntime(status = "idle") {
   projectiles.length = 0;
   masteryTracker = createMasteryTracker();
   skillRuntime.active = null;
+  pendingFloorAdvance = false;
 }
 
 function hasSave() {
@@ -154,9 +161,8 @@ function loadGame() {
   const restored = restoreGame();
   if (!restored) return false;
   state = restored;
-  state.world.scene = "village";
-  state.player.x = clamp(state.player.x, 80, 880);
-  state.player.y = clamp(state.player.y, 150, 475);
+  state.player.x = clamp(state.player.x, 70, 890);
+  state.player.y = clamp(state.player.y, 105, 485);
   return true;
 }
 
@@ -178,8 +184,14 @@ function startGame(useSave) {
   ui["start-screen"].classList.add("hidden");
   ui["start-screen"].setAttribute("aria-hidden", "true");
   ui["continue-button"].hidden = false;
+  if (resumed && state.world.scene === "cave" && currentRegionProgress().expedition) {
+    prepareExpeditionAfterLoad(currentRegionProgress());
+    startFloorEncounter(.65);
+  } else {
+    state.world.scene = "village";
+  }
   updateUI();
-  showToast(resumed ? "Jornada retomada." : "A caverna aguarda ao nordeste.");
+  showToast(resumed && state.world.scene === "cave" ? "Incursão retomada com segurança." : resumed ? "Jornada retomada." : "A caverna aguarda ao nordeste.");
   playTone(174, .07, .12, "triangle");
 }
 
@@ -206,16 +218,22 @@ function updateUI() {
   ui["coin-count"].textContent = p.coins;
   ui["inventory-summary"].textContent = `${inventoryUsed(p)} / ${inventoryCapacity(p)}`;
   ui["journey-region-name"].textContent = regionDefinition.name;
-  ui["cave-progress"].textContent = `${regionDefinition.name}: estágio ${cave.highestUnlockedFloor} de ${regionConfig.totalFloors}`;
+  ui["cave-progress"].textContent = cave.expedition
+    ? `${regionDefinition.name}: incursão no andar ${cave.expedition.floor} de ${regionConfig.totalFloors}`
+    : `${regionDefinition.name}: melhor andar ${cave.highestUnlockedFloor} de ${regionConfig.totalFloors}`;
   const groveUnlocked = regionUnlockStatus(state.world, "bosque_cinzas").unlocked;
   ui["grove-journey-row"].classList.toggle("locked", !groveUnlocked);
   ui["grove-journey-status"].textContent = groveUnlocked
-    ? `Estágio ${state.world.regionProgress.bosque_cinzas.highestUnlockedFloor} de ${GAME_CONFIG.ashenGrove.totalFloors}`
+    ? state.world.regionProgress.bosque_cinzas.expedition
+      ? `Incursão no andar ${state.world.regionProgress.bosque_cinzas.expedition.floor} de ${GAME_CONFIG.ashenGrove.totalFloors}`
+      : `Melhor andar ${state.world.regionProgress.bosque_cinzas.highestUnlockedFloor} de ${GAME_CONFIG.ashenGrove.totalFloors}`
     : "Derrote o Rei Goblin";
   ui["merchant-coins"].textContent = p.coins;
   ui["forge-coins"].textContent = p.coins;
   ui["damage-price"].textContent = damagePrice();
   ui["armor-price"].textContent = armorPrice();
+  ui["potion-price"].textContent = GAME_CONFIG.economy.potionPrice;
+  ui["rest-price"].textContent = GAME_CONFIG.economy.restPrice;
   updateSkillHotbar();
   ui["sound-button"].setAttribute("aria-pressed", String(state.settings.audioEnabled));
   ui["sound-button"].setAttribute("aria-label", state.settings.audioEnabled ? "Desativar sons" : "Ativar sons");
@@ -223,30 +241,75 @@ function updateUI() {
   ui["location-badge"].innerHTML = state.world.scene === "village"
     ? "<span>♦</span> Clareira do Corvo"
     : `<span>♦</span> ${regionDefinition.name}`;
-  const displayedFloor = state.world.scene === "cave" && encounter.spec
-    ? encounter.spec.floor
-    : cave.selectedFloor || cave.highestUnlockedFloor;
-  const floorKills = cave.floorKills[displayedFloor] || 0;
+  const expedition = cave.expedition;
+  const displayedFloor = state.world.scene === "cave"
+    ? expedition?.floor || encounter.spec?.floor || 1
+    : expedition?.floor || cave.highestUnlockedFloor;
+  const floorKills = expedition?.floorKills?.[displayedFloor] || 0;
   const floorTarget = getFloorUnlockTarget(displayedFloor, regionConfig);
-  ui["cave-floor-badge"].hidden = state.world.scene !== "cave";
-  ui["cave-floor-value"].textContent = displayedFloor === regionConfig.totalFloors
-    ? `${displayedFloor} / ${regionConfig.totalFloors} · CHEFE ${cave.bossVictories}`
-    : `${displayedFloor} / ${regionConfig.totalFloors} · ${Math.min(floorKills, floorTarget)} / ${floorTarget}`;
+  const advanceState = getFloorAdvanceState(cave, displayedFloor, regionConfig);
+  const expeditionState = expedition?.state;
+  ui["cave-floor-badge"].hidden = true;
+  ui["cave-floor-value"].textContent = `${displayedFloor} / ${regionConfig.totalFloors} · ${Math.min(floorKills, floorTarget)} / ${floorTarget}`;
+
+  ui["objective-actions"].hidden = true;
+  ui["floor-advance-button"].hidden = true;
+  ui["floor-stay-button"].hidden = true;
+  ui["floor-exit-button"].hidden = true;
+  ui["floor-advance-button"].classList.remove("pending");
 
   if (state.world.scene === "cave") {
-    ui["objective-title"].textContent = enemy
-      ? `${encounter.enemies.filter(actor => actor.state !== ENEMY_STATES.DYING).length} ameaça(s) ativa(s)`
-      : encounter.status === "complete" ? "Encontro concluído" : "A próxima onda se aproxima";
-    ui["objective-detail"].textContent = displayedFloor === regionConfig.totalFloors
-      ? `${regionDefinition.name} · chefe repetível · saída ao sul`
-      : `${floorKills} de ${floorTarget} abates · você escolhe quando avançar`;
+    const activeThreats = encounter.enemies.filter(actor => actor.state !== ENEMY_STATES.DYING).length;
+    ui["objective-progress"].hidden = false;
+    ui["objective-floor"].textContent = `ANDAR ${displayedFloor} / ${regionConfig.totalFloors}`;
+    ui["objective-kills"].textContent = `${Math.min(floorKills, floorTarget)} / ${floorTarget}`;
+
+    if (expeditionState === EXPEDITION_STATES.CAVE_COMPLETED) {
+      ui["objective-title"].textContent = "Cave concluída!";
+      ui["objective-detail"].textContent = "Boss derrotado · recolha seus itens e saia quando desejar";
+      ui["objective-kills"].textContent = "CONCLUÍDA";
+      ui["objective-actions"].hidden = false;
+      ui["floor-exit-button"].hidden = false;
+    } else if (expeditionState === EXPEDITION_STATES.BOSS_ACTIVE) {
+      ui["objective-title"].textContent = enemy ? `${enemy.name} está em combate` : "O Boss se aproxima";
+      ui["objective-detail"].textContent = `${regionDefinition.name} · confronto final desta incursão`;
+      ui["objective-kills"].textContent = "BOSS";
+    } else if (expeditionState === EXPEDITION_STATES.BOSS_PENDING) {
+      ui["objective-title"].textContent = "Boss desbloqueado!";
+      ui["objective-detail"].textContent = activeThreats
+        ? `Derrote ${activeThreats} ameaça(s) restante(s) para iniciar o confronto`
+        : "O confronto final está prestes a começar";
+    } else if (expeditionState === EXPEDITION_STATES.FLOOR_COMPLETED) {
+      ui["objective-title"].textContent = "Andar concluído!";
+      ui["objective-detail"].textContent = `O andar ${advanceState.nextFloor} está disponível`;
+      ui["objective-actions"].hidden = false;
+      ui["floor-advance-button"].hidden = false;
+      ui["floor-stay-button"].hidden = false;
+      ui["floor-advance-button"].textContent = `Avançar ao andar ${advanceState.nextFloor}`;
+    } else if (expeditionState === EXPEDITION_STATES.FARMING) {
+      ui["objective-title"].textContent = `Andar ${displayedFloor} concluído`;
+      ui["objective-detail"].textContent = `Farm livre · ${expedition.farmKills[displayedFloor] || 0} abates adicionais`;
+      ui["objective-actions"].hidden = false;
+      ui["floor-advance-button"].hidden = false;
+      ui["floor-advance-button"].textContent = `Avançar ao andar ${advanceState.nextFloor}`;
+    } else {
+      ui["objective-title"].textContent = activeThreats ? `${activeThreats} ameaça(s) ativa(s)` : "A próxima onda se aproxima";
+      ui["objective-detail"].textContent = displayedFloor === regionConfig.totalFloors
+        ? `Desbloqueio do Boss · ${Math.min(floorKills, floorTarget)} de ${floorTarget} abates`
+        : `${Math.min(floorKills, floorTarget)} de ${floorTarget} abates para concluir o andar`;
+    }
   } else if (firstCave.bossVictories > 0) {
+    ui["objective-progress"].hidden = true;
     ui["objective-title"].textContent = "Novos caminhos estão abertos";
     ui["objective-detail"].textContent = "Use o mapa próximo à entrada para escolher uma região";
   } else if (firstCave.highestUnlockedFloor > 1) {
+    ui["objective-progress"].hidden = true;
     ui["objective-title"].textContent = "Retorne à Caverna Sombria";
-    ui["objective-detail"].textContent = `O andar ${firstCave.highestUnlockedFloor} está desbloqueado`;
+    ui["objective-detail"].textContent = firstCave.expedition
+      ? `Retome a incursão no andar ${firstCave.expedition.floor}`
+      : `Seu melhor avanço foi o andar ${firstCave.highestUnlockedFloor}`;
   } else {
+    ui["objective-progress"].hidden = true;
     ui["objective-title"].textContent = "Entre na Caverna Sombria";
     ui["objective-detail"].textContent = "Siga a trilha ao nordeste da vila";
   }
@@ -325,6 +388,7 @@ function interact() {
 
 function openMerchant() {
   if (dialogOpen()) return;
+  selectedMerchantSaleUid = null;
   updateUI();
   renderMerchantEquipment();
   keys.clear();
@@ -351,6 +415,63 @@ function renderMerchantEquipment() {
     return article;
   });
   ui["merchant-equipment-grid"].replaceChildren(...entries);
+  renderMerchantSale();
+}
+
+function renderMerchantSale(message = "") {
+  const equipment = state.player.inventory.filter(entry => ITEMS[entry.definitionId]?.type === "equipment");
+  if (!equipment.some(entry => entry.uid === selectedMerchantSaleUid)) selectedMerchantSaleUid = null;
+  const equipped = new Set(Object.values(state.player.equipment || {}).filter(Boolean));
+  ui["merchant-sale-grid"].replaceChildren(...equipment.map(entry => {
+    const item = ITEMS[entry.definitionId];
+    const saleReturn = getSaleReturn(entry);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `merchant-sale-entry${entry.uid === selectedMerchantSaleUid ? " selected" : ""}`;
+    button.disabled = merchantBusy || equipped.has(entry.uid);
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", String(entry.uid === selectedMerchantSaleUid));
+    const icon = document.createElement("canvas"); icon.width = 40; icon.height = 40;
+    const copy = document.createElement("span");
+    copy.innerHTML = `<strong>${item.name}${entry.enhancementLevel ? ` +${entry.enhancementLevel}` : ""}</strong><small>${equipped.has(entry.uid) ? "Equipado" : RARITIES[item.rarity].label}</small>`;
+    const value = document.createElement("b"); value.textContent = `${saleReturn.gold} ●`;
+    button.append(icon, copy, value);
+    button.addEventListener("click", () => { selectedMerchantSaleUid = entry.uid; renderMerchantSale(); });
+    drawItemIcon(icon, item);
+    return button;
+  }));
+
+  const selected = getInventoryEntry(state.player, selectedMerchantSaleUid);
+  const saleReturn = getSaleReturn(selected);
+  if (!selected || !saleReturn) {
+    ui["merchant-sale-preview"].textContent = message || (equipment.length ? "Selecione uma peça não equipada para conferir o retorno." : "Nenhum equipamento disponível para venda.");
+    ui["merchant-sell-button"].disabled = true;
+    return;
+  }
+  const materialText = Object.entries(saleReturn.materials).map(([id, quantity]) => `${quantity}× ${ITEMS[id].name}`).join(" · ");
+  ui["merchant-sale-preview"].textContent = message || `Retorno: ${saleReturn.gold} moedas${materialText ? ` · ${materialText}` : ""}. A venda é definitiva.`;
+  ui["merchant-sell-button"].disabled = merchantBusy;
+}
+
+function sellMerchantEquipment() {
+  if (merchantBusy || !selectedMerchantSaleUid) return;
+  merchantBusy = true;
+  const entry = getInventoryEntry(state.player, selectedMerchantSaleUid);
+  const name = ITEMS[entry?.definitionId]?.name || "Equipamento";
+  const result = sellEquipment(state.player, selectedMerchantSaleUid, { transactionId: `merchant_sell_${Date.now()}_${Math.random()}` });
+  if (!result.ok) {
+    merchantBusy = false;
+    renderMerchantSale(result.reason);
+    return;
+  }
+  const materials = Object.entries(result.materials || {}).map(([id, quantity]) => `${quantity}× ${ITEMS[id].name}`).join(" · ");
+  selectedMerchantSaleUid = null;
+  updateUI();
+  saveGame(true);
+  renderMerchantEquipment();
+  renderMerchantSale(`${name}: +${result.price} moedas${materials ? ` · ${materials}` : ""}.`);
+  playTone(390, .05, .11, "triangle");
+  window.setTimeout(() => { merchantBusy = false; if (ui["merchant-dialog"].open) renderMerchantEquipment(); }, 320);
 }
 
 function buyMerchantEquipment(definitionId) {
@@ -519,7 +640,8 @@ function sellSelectedEquipment() {
   playTone(390, .05, .11, "triangle");
   updateUI();
   saveGame(true);
-  renderForgeUI(`${name} vendido por ${result.price} moedas.`, true);
+  const recovered = Object.entries(result.materials || {}).map(([definitionId, quantity]) => `${quantity}× ${ITEMS[definitionId].name}`).join(" · ");
+  renderForgeUI(`${name} reciclado por ${result.price} moedas${recovered ? ` + ${recovered}` : ""}.`, true);
   window.setTimeout(() => { forgeBusy = false; if (ui["forge-dialog"].open) renderForgeUI(); }, 320);
 }
 
@@ -572,7 +694,8 @@ function renderSkillsUI(message = "") {
     const meta = document.createElement("div"); meta.className = "skill-meta";
     const details = skillDetails(definition, Math.max(1, level));
     const next = level < definition.maxLevel ? skillDetails(definition, level + 1) : "Nível máximo";
-    meta.innerHTML = `<span>${details}</span><span>Próximo: ${next}</span>${message && message.startsWith(id) ? `<span>${message.slice(id.length + 1)}</span>` : ""}`;
+    const requirement = !check.ok && level < definition.maxLevel ? `<span class="skill-requirement">${check.reason}</span>` : "";
+    meta.innerHTML = `<span>${details}</span><span>Próximo: ${next}</span>${requirement}${message && message.startsWith(id) ? `<span>${message.slice(id.length + 1)}</span>` : ""}`;
     const button = document.createElement("button"); button.type = "button";
     button.disabled = !check.ok;
     button.textContent = level >= definition.maxLevel ? "Nível máximo" : `${level ? "Melhorar" : "Desbloquear"} · ${check.cost || definition.pointCosts[level] || 1} ponto${(check.cost || definition.pointCosts[level] || 1) === 1 ? "" : "s"}`;
@@ -916,35 +1039,36 @@ function openRegions() {
     card.className = `region-card${status.unlocked ? "" : " locked"}${definition.status === "planned" ? " planned" : ""}`;
     card.style.setProperty("--region-color", id === "bosque_cinzas" ? "#a45e3d" : id === "caverna_sombria" ? "#7b815f" : "#55584d");
     const descriptions = {
-      caverna_sombria: "Vinte salões goblins sob a pedra negra.", bosque_cinzas: "Árvores queimadas, feras sombrias e raízes que ainda respiram.",
+      caverna_sombria: "Dez salões goblins sob a pedra negra.", bosque_cinzas: "Dez trilhas queimadas, feras sombrias e raízes que ainda respiram.",
       montanhas_lamento: "Picos antigos aguardam uma futura expedição.", catacumbas_esquecidas: "Os mortos permanecem preparados em dados.", fortaleza_eclipse: "A cidadela final permanece além do horizonte."
     };
-    const buttonLabel = definition.status === "planned" ? "Em preparação" : status.unlocked ? "Viajar" : status.reason;
-    const floorOptions = status.unlocked && progress
-      ? `<label class="region-floor-select">ANDAR <select id="region-floor-${id}" name="region-floor-${id}" aria-label="Andar de ${definition.name}">${Array.from({ length: progress.highestUnlockedFloor }, (_, index) => index + 1).map(floor => `<option value="${floor}" ${floor === progress.selectedFloor ? "selected" : ""}>${floor}</option>`).join("")}</select></label>`
-      : "";
-    card.innerHTML = `<span class="eyebrow">REGIÃO ${String(definition.order).padStart(2, "0")}</span><h3>${definition.name}</h3><p>${descriptions[id]}</p><dl><div><dt>NÍVEL RECOMENDADO</dt><dd>${definition.recommendedLevel.join("–")}</dd></div><div><dt>PROGRESSO</dt><dd>${progress ? `${progress.highestUnlockedFloor} / ${getRegionConfig(id).totalFloors}` : "—"}</dd></div></dl>${floorOptions}<button type="button" ${status.unlocked ? "" : "disabled"}>${buttonLabel}</button>`;
-    card.querySelector("button").addEventListener("click", () => enterRegion(id, card.querySelector("select")?.value));
+    const buttonLabel = definition.status === "planned" ? "Em preparação" : status.unlocked
+      ? progress?.expedition ? `Retomar andar ${progress.expedition.floor}` : "Iniciar incursão"
+      : status.reason;
+    const progressLabel = progress?.expedition
+      ? `Incursão ${progress.expedition.floor} / ${getRegionConfig(id).totalFloors}`
+      : progress ? `Melhor andar ${progress.highestUnlockedFloor} / ${getRegionConfig(id).totalFloors}` : "—";
+    card.innerHTML = `<span class="eyebrow">REGIÃO ${String(definition.order).padStart(2, "0")}</span><h3>${definition.name}</h3><p>${descriptions[id]}</p><dl><div><dt>NÍVEL RECOMENDADO</dt><dd>${definition.recommendedLevel.join("–")}</dd></div><div><dt>PROGRESSO</dt><dd>${progressLabel}</dd></div></dl><button type="button" ${status.unlocked ? "" : "disabled"}>${buttonLabel}</button>`;
+    card.querySelector("button").addEventListener("click", () => enterRegion(id));
     return card;
   }));
   ui["region-dialog"].showModal();
 }
 
-function enterRegion(regionId, requestedFloor = null) {
+function enterRegion(regionId) {
   const status = regionUnlockStatus(state.world, regionId);
   if (!status.unlocked) return showToast(status.reason, true);
   state.world.currentRegionId = regionId;
-  if (requestedFloor != null) {
-    const selection = selectCaveFloor(currentRegionProgress(), requestedFloor, currentRegionConfig());
-    if (!selection.ok) return showToast(selection.reason, true);
-  }
   if (ui["region-dialog"].open) ui["region-dialog"].close();
   enterCave();
 }
 
 function enterCave() {
   const config = currentRegionConfig();
-  const floor = beginCaveExpedition(currentRegionProgress(), config);
+  const progress = currentRegionProgress();
+  if (progress.expedition?.completed) startNewCaveExpedition(progress, config);
+  else if (progress.expedition) prepareExpeditionAfterLoad(progress);
+  const floor = beginCaveExpedition(progress, config);
   state.world.scene = "cave";
   state.world.caveVisits += 1;
   state.player.x = 480;
@@ -966,8 +1090,9 @@ function enterCave() {
 }
 
 function exitCave() {
-  if (ui["encounter-dialog"].open) ui["encounter-dialog"].close();
-  abandonCaveExpedition(currentRegionProgress());
+  const progress = currentRegionProgress();
+  abandonCaveExpedition(progress);
+  if (progress.expedition?.completed) finishCaveExit(progress);
   state.world.scene = "village";
   state.player.x = 750;
   state.player.y = 225;
@@ -990,16 +1115,21 @@ function startFloorEncounter(delay = .85) {
   clearEncounterRuntime("spawning");
   const config = currentRegionConfig();
   const progress = currentRegionProgress();
-  const floor = progress.selectedFloor || beginCaveExpedition(progress, config);
+  const floor = progress.expedition?.floor || beginCaveExpedition(progress, config);
   encounter.spec = createEncounterSpec(floor, config);
-  farmRuntime = createFarmRuntime(config.id, floor, config, { id: encounter.id, initialDelay: delay });
+  farmRuntime = createFarmRuntime(config.id, floor, config, {
+    id: encounter.id,
+    expeditionId: progress.expedition?.id,
+    initialDelay: delay
+  });
   updateUI();
 }
 
 function spawnEnemy(spawnRequest) {
   if (!spawnRequest || !farmRuntime) return false;
   const spec = createEncounterSpec(farmRuntime.floor, currentRegionConfig(), spawnRequest.roleId);
-  const positions = GAME_CONFIG.goblin.spawnPositions.filter(([spawnX, spawnY]) => !isCaveBlocked(spawnX, spawnY, spec.boss ? 24 : 14));
+  spec.expeditionId = farmRuntime.expeditionId;
+  const positions = GAME_CONFIG.combat.enemySpawnPositions.filter(([spawnX, spawnY]) => !isCaveBlocked(spawnX, spawnY, spec.boss ? 24 : 14));
   if (!positions.length) {
     console.error("[KnightFall] Nenhum ponto válido para criar o inimigo.");
     farmRuntime.spawnTimer = 1;
@@ -1011,7 +1141,7 @@ function spawnEnemy(spawnRequest) {
   const [x, y] = pool[(spawnRequest.waveIndex + spawnRequest.id.length + state.world.caveVisits) % pool.length];
   encounter.enemies.push({
     id: spawnRequest.id, name: spec.name, x, y, hp: spec.hp, maxHp: spec.hp,
-    level: spec.floor, speed: spec.speed, attack: spec.attack, facing: x > state.player.x ? -1 : 1,
+    level: spec.floor, speed: spec.speed, attack: spec.attack, defense: spec.defense, facing: x > state.player.x ? -1 : 1,
     spec, phase: 1, phaseChanged: false, patternIndex: 0, state: ENEMY_STATES.PATROL,
     stateTimer: .5, stateDuration: .5, moving: false, attackAnimation: 0, hitApplied: false,
     attackKind: null, lockedTarget: null, chargeDir: null, hurtTimer: 0, navPath: [], navTimer: 0,
@@ -1131,7 +1261,8 @@ function applyPlayerDamage(enemy, multiplier, eventId, source = "basic") {
   if (!enemy || enemy.state === ENEMY_STATES.DYING) return 0;
   const [minimum, maximum] = GAME_CONFIG.combat.playerDamageVariance;
   const baseDamage = calculateStats(state.player).attack * outgoingDamageMultiplier(state.player);
-  const damage = Math.max(1, Math.round(baseDamage * multiplier * randomBetween(minimum, maximum)));
+  const rawDamage = baseDamage * multiplier * randomBetween(minimum, maximum);
+  const damage = Math.max(1, Math.round(rawDamage - (enemy.defense || enemy.spec.defense || 0)));
   enemy.hp = Math.max(0, enemy.hp - damage);
   enemy.hurtTimer = source === "golpe_poderoso" ? .3 : .2;
   if (enemy.hp > 0) {
@@ -1161,6 +1292,15 @@ function beginEnemyDeath(defeated) {
 
   const regionProgress = currentRegionProgress();
   const regionConfig = currentRegionConfig();
+  const progressResult = recordFloorKill(regionProgress, defeated.spec.floor, regionConfig, {
+    boss: defeated.spec.boss,
+    expeditionId: defeated.spec.expeditionId,
+    regionId: defeated.spec.regionId
+  });
+  if (progressResult.reason === "enemy_outside_expedition" || defeated.spec.boss && !progressResult.counted) {
+    console.error("[KnightFall] Recompensa recusada para entidade fora da incursão ativa.", defeated.id);
+    return;
+  }
   const reward = grantEncounterRewards(regionProgress, defeated.spec);
   const bonus = reward.firstVictory || { xp: 0, coins: 0, items: [] };
   const totalCoins = reward.coins + bonus.coins;
@@ -1188,12 +1328,16 @@ function beginEnemyDeath(defeated) {
   if (progression.levels) {
     state.player.hp = calculateStats(state.player).maxHp;
   }
-  const progressResult = recordFloorKill(regionProgress, defeated.spec.floor, regionConfig, { boss: defeated.spec.boss });
+  if (progressResult.unlocked || progressResult.bossUnlocked || progressResult.caveCompleted) {
+    farmRuntime.spawnQueue.length = 0;
+    farmRuntime.spawnTimer = 0;
+  }
   encounter.rewardResults.push({ enemyId: defeated.id, ...reward, totalXp, totalCoins, collected, missed, progression, progress: progressResult });
   if (encounter.rewardResults.length > 30) encounter.rewardResults.shift();
   const messages = [];
-  if (progressResult.unlocked) messages.push(`Andar ${progressResult.nextFloor} desbloqueado — o farm continua aqui.`);
-  if (defeated.spec.boss) messages.push(`${defeated.name} derrotado. Ele retornará para outro desafio.`);
+  if (progressResult.unlocked) messages.push(`Andar concluído! Escolha avançar ou permanecer.`);
+  if (progressResult.bossUnlocked) messages.push("Boss desbloqueado! Derrote as ameaças restantes.");
+  if (progressResult.caveCompleted) messages.push(`${defeated.name} derrotado. Cave concluída!`);
   if (collected.length) messages.push(`Loot: ${collected.join(", ")}.`);
   if (missed.length) messages.push(`Mochila cheia: ${missed.join(", ")}.`);
   if (messages.length) showToast(messages.join(" "), missed.length > 0 && !collected.length);
@@ -1203,42 +1347,84 @@ function beginEnemyDeath(defeated) {
 
 function finalizeEnemyDeath(defeated) {
   encounter.enemies = encounter.enemies.filter(enemy => enemy.id !== defeated.id);
-  if (!encounter.enemies.length && currentRegionConfig().farm?.continuous !== true) {
-    encounter.status = "complete";
-    showEncounterComplete();
-  }
+  const expedition = currentRegionProgress().expedition;
+  if (!encounter.enemies.length && expedition?.state === EXPEDITION_STATES.BOSS_PENDING) spawnExpeditionBoss();
+  if (expedition?.state === EXPEDITION_STATES.CAVE_COMPLETED) encounter.status = "complete";
   updateUI();
 }
 
-function showEncounterComplete() {
-  const result = encounter.rewardResults[encounter.rewardResults.length - 1];
-  if (!result || ui["encounter-dialog"].open) return;
-  const boss = encounter.spec.boss;
-  ui["encounter-kicker"].textContent = boss ? "CHEFE DERROTADO" : `ESTÁGIO ${encounter.spec.floor} CONCLUÍDO`;
-  ui["encounter-title"].textContent = boss ? `${encounter.spec.name} foi derrotado` : "O caminho adiante está aberto";
-  ui["encounter-summary"].textContent = boss
-    ? `${currentRegionDefinition().name} foi vencida. O confronto pode ser repetido.`
-    : `O estágio ${result.progress.nextFloor} está disponível nesta expedição.`;
-  const itemText = result.collected.length ? `<span class="loot-summary">◆ ${result.collected.join(", ")}</span>` : "";
-  const missedText = result.missed.length ? `<small class="loot-missed">Mochila cheia: ${result.missed.join(", ")}</small>` : "";
-  ui["encounter-rewards"].innerHTML = `<span>✦ ${result.totalXp} XP</span><span>● ${result.totalCoins} moedas</span>${itemText}${missedText}`;
-  ui["advance-floor-button"].textContent = boss ? "Enfrentar novamente" : `Avançar ao estágio ${result.progress.nextFloor}`;
-  keys.clear();
-  ui["encounter-dialog"].showModal();
+function spawnExpeditionBoss() {
+  const progress = currentRegionProgress();
+  const config = currentRegionConfig();
+  const expedition = progress.expedition;
+  if (!expedition || encounter.enemies.some(enemy => enemy.state !== ENEMY_STATES.DYING)) return false;
+  const activeCommonCount = encounter.enemies.filter(enemy => !enemy.spec.boss).length;
+  const marked = markBossSpawned(progress, config, { activeCommonCount });
+  if (!marked.ok) return false;
+  if (farmRuntime) {
+    farmRuntime.spawnQueue.length = 0;
+    farmRuntime.spawnTimer = 0;
+  }
+  const spawned = spawnEnemy({
+    id: `${expedition.id}_boss`,
+    roleId: "boss",
+    waveIndex: (farmRuntime?.waveIndex || 0) + 1
+  });
+  if (spawned) encounter.spec = primaryEnemy()?.spec || encounter.spec;
+  saveGame();
+  return spawned;
 }
 
-function advanceEncounter() {
-  const result = encounter.rewardResults[encounter.rewardResults.length - 1];
-  if (!ui["encounter-dialog"].open || !result) return;
-  ui["encounter-dialog"].close();
-  if (result.progress.nextFloor) selectCaveFloor(currentRegionProgress(), result.progress.nextFloor, currentRegionConfig());
+function requestFloorAdvance() {
+  if (!playing || state.world.scene !== "cave" || dialogOpen() || pendingFloorAdvance) return;
+  const progress = currentRegionProgress();
+  const config = currentRegionConfig();
+  const floor = progress.expedition?.floor;
+  const advanceState = getFloorAdvanceState(progress, floor, config);
+  if (!advanceState.available) return;
+  pendingFloorAdvance = true;
+  advanceToNextFloor();
+}
+
+function advanceToNextFloor() {
+  if (!pendingFloorAdvance || state.world.scene !== "cave") return false;
+  const progress = currentRegionProgress();
+  const config = currentRegionConfig();
+  const result = advanceCaveFloor(progress, progress.expedition?.floor, config);
+  if (!result.ok) {
+    pendingFloorAdvance = false;
+    showToast(result.reason, true);
+    updateUI();
+    return false;
+  }
+  pendingFloorAdvance = false;
   state.player.x = 480;
   state.player.y = 444;
   state.player.dirX = 0;
   state.player.dirY = -1;
   transitionFlash = 1;
-  startFloorEncounter(.9);
-  saveGame();
+  startFloorEncounter(.75);
+  showToast(`${currentRegionDefinition().name} · andar ${result.nextFloor}`);
+  saveGame(true);
+  return true;
+}
+
+function remainOnCurrentFloor() {
+  if (!playing || state.world.scene !== "cave" || dialogOpen()) return false;
+  const result = stayOnCompletedFloor(currentRegionProgress(), currentRegionConfig());
+  if (!result.ok) {
+    showToast(result.reason, true);
+    return false;
+  }
+  if (farmRuntime) {
+    farmRuntime.spawnQueue.length = 0;
+    farmRuntime.breakTimer = 0;
+    farmRuntime.spawnTimer = .35;
+  }
+  showToast(`Você permaneceu no andar ${result.floor}. O farm foi reativado.`);
+  updateUI();
+  saveGame(true);
+  return true;
 }
 
 function usePotion() {
@@ -1352,7 +1538,7 @@ function returnToVillage() {
 
 function dialogOpen() {
   return ui["merchant-dialog"].open || ui["inventory-dialog"].open || ui["forge-dialog"].open
-    || ui["skills-dialog"].open || ui["death-dialog"].open || ui["encounter-dialog"].open
+    || ui["skills-dialog"].open || ui["death-dialog"].open
     || ui["region-dialog"].open;
 }
 
@@ -1407,8 +1593,12 @@ function update(dt) {
   updateInteractionPrompt();
 
   if (state.world.scene === "cave") {
+    const progress = currentRegionProgress();
     pathfindBudget = currentRegionConfig().farm?.maxPathfindsPerFrame || 1;
-    const spawnRequest = farmRuntime ? updateFarmSpawner(farmRuntime, dt, encounter.enemies.length) : null;
+    if (progress.expedition?.state === EXPEDITION_STATES.BOSS_PENDING && !encounter.enemies.length) spawnExpeditionBoss();
+    const spawnRequest = farmRuntime && !pendingFloorAdvance && canSpawnCommonEnemies(progress)
+      ? updateFarmSpawner(farmRuntime, dt, encounter.enemies.length)
+      : null;
     if (spawnRequest) spawnEnemy(spawnRequest);
     encounter.enemies.slice().forEach(enemy => updateEnemy(enemy, dt));
     separateEnemies();
@@ -1493,7 +1683,7 @@ function updateBossPhase(enemy) {
 function updateEnemyChase(enemy, dist, dt) {
   const ai = enemy.spec.ai;
   enemy.moving = false;
-  if (enemy.spec.archetype === "archer") {
+  if (enemy.spec.archetype === "archer" || enemy.spec.archetype === "thrower") {
     if (dist < ai.retreatDistance) {
       moveEnemyAway(enemy, state.player, dt);
       return;
@@ -1542,7 +1732,7 @@ function startEnemyAttack(enemy) {
   enemy.hitApplied = false;
   enemy.attackAnimation = enemy.spec.ai.attackDuration;
   setEnemyState(enemy, ENEMY_STATES.ATTACK, enemy.spec.ai.attackDuration);
-  if (enemy.attackKind === "arrow" || enemy.attackKind === "ash_bolt") spawnEnemyProjectile(enemy);
+  if (enemy.attackKind === "arrow" || enemy.attackKind === "ash_bolt" || enemy.attackKind === "rock") spawnEnemyProjectile(enemy);
   playTone(enemy.spec.boss ? 74 : 92, .055, .08, "square");
 }
 
@@ -1567,7 +1757,7 @@ function updateEnemyAttack(enemy, dt) {
 }
 
 function resolveEnemyAttack(enemy) {
-  if (enemy.attackKind === "arrow" || enemy.attackKind === "ash_bolt") return;
+  if (enemy.attackKind === "arrow" || enemy.attackKind === "ash_bolt" || enemy.attackKind === "rock") return;
   const phaseDamage = enemy.phase === 2 ? enemy.spec.ai.phaseTwoDamageMultiplier || 1 : 1;
   const damageMultiplier = enemy.attackKind === "heavy" ? 1.35 : enemy.attackKind === "area" ? 1.15 : enemy.attackKind === "charge" ? 1.22 : 1;
   const range = enemy.attackKind === "area" ? enemy.spec.ai.areaRadius : enemy.attackKind === "charge" ? 52 : enemy.spec.ai.attackRange + 10;
@@ -1585,11 +1775,11 @@ function spawnEnemyProjectile(enemy) {
   const dx = target.x - enemy.x;
   const dy = target.y - enemy.y;
   const length = Math.max(1, Math.hypot(dx, dy));
-  const speed = enemy.phase === 2 ? 295 : 255;
+  const speed = (enemy.spec.ai.projectileSpeed || (enemy.attackKind === "ash_bolt" ? 310 : 315)) * (enemy.phase === 2 ? 1.12 : 1);
   addOwnedProjectile(projectiles, {
     id: `${enemy.id}_${enemy.attackKind}_${elapsed}_${enemy.patternIndex}`, ownerId: enemy.id, kind: enemy.attackKind,
     x: enemy.x, y: enemy.y - 30, vx: dx / length * speed, vy: dy / length * speed,
-    damage: enemy.attack, life: 2.2
+    damage: enemy.attack, life: 2.2, initialLife: 2.2, targetX: target.x, targetY: target.y - 25
   }, currentRegionConfig().farm?.projectileCap || 12);
 }
 
@@ -1652,7 +1842,7 @@ function moveEnemyAway(enemy, target, dt) {
 function isVillageBlocked(x, y, radius = 15) {
   return villageTrees.some(([treeX, treeY, scale]) => Math.hypot(x - treeX, y - treeY) < radius + scale * 16)
     || villageRocks.some(([rockX, rockY, rockRadius]) => Math.hypot(x - rockX, y - rockY) < radius + rockRadius)
-    || Math.hypot(x - merchant.x, y - merchant.y) < radius + 15
+    || Math.hypot(x - merchant.x, y - merchant.y) < radius + 24
     || Math.hypot(x - forgeStation.x, y - forgeStation.y) < radius + 22;
 }
 
@@ -1840,7 +2030,6 @@ function drawVillage() {
   ctx.textAlign = "center";
   ctx.fillText("BRAM • MERCADOR", merchant.x, merchant.y - 78);
   ctx.fillText("FORJA DE BRAM", forgeStation.x, forgeStation.y - 78);
-  ctx.fillText("CAVERNA SOMBRIA", 790, 72);
 }
 
 function drawTileGround(scene) {
@@ -2387,10 +2576,12 @@ function drawEnemyTelegraph(enemy) {
   if (enemy.attackKind === "area") {
     const radius = enemy.spec.ai.areaRadius;
     ctx.beginPath(); ctx.arc(enemy.x, enemy.y - 16, radius, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
-  } else if (enemy.attackKind === "charge" || enemy.attackKind === "arrow" || enemy.attackKind === "ash_bolt") {
+  } else if (enemy.attackKind === "charge" || enemy.attackKind === "arrow" || enemy.attackKind === "ash_bolt" || enemy.attackKind === "rock") {
     const target = enemy.lockedTarget || state.player;
     ctx.beginPath(); ctx.moveTo(enemy.x, enemy.y - 25); ctx.lineTo(target.x, target.y - 25); ctx.stroke();
-    ctx.fillRect(target.x - 7, target.y - 32, 14, 14);
+    if (enemy.attackKind === "rock") {
+      ctx.beginPath(); ctx.arc(target.x, target.y - 20, 17, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    } else ctx.fillRect(target.x - 7, target.y - 32, 14, 14);
   } else {
     const range = enemy.spec.ai.attackRange + (enemy.attackKind === "heavy" ? 22 : 8);
     const target = enemy.lockedTarget || state.player;
@@ -2548,7 +2739,7 @@ function drawPixelGoblin(enemy, direction) {
   ctx.translate(Math.round(x), Math.round(y + bob));
   ctx.scale(visual.scale, visual.scale);
   if (isTelegraphing) ctx.translate(-enemy.facing * 3, 3);
-  if (isAttacking && enemy.attackKind !== "arrow") ctx.translate(enemy.facing * Math.sin(attackProgress * Math.PI) * 7, 0);
+  if (isAttacking && !["arrow", "rock"].includes(enemy.attackKind)) ctx.translate(enemy.facing * Math.sin(attackProgress * Math.PI) * 7, 0);
   if (direction === "up") drawGoblinWeapon(enemy, direction, isAttacking);
   ctx.fillStyle = "#3a2b25";
   ctx.fillRect(-11, -7 + step, 9, 8); ctx.fillRect(2, -7 - step, 9, 8);
@@ -2588,6 +2779,15 @@ function drawGoblinCrown() {
 }
 
 function drawGoblinWeapon(enemy, direction, attacking) {
+  if (enemy.spec.visual.weapon === "rock") {
+    const anchors = { right: [14, -28], left: [-14, -28], down: [11, -22], up: [-11, -34] };
+    const [x, y] = anchors[direction];
+    const windup = enemy.state === ENEMY_STATES.TELEGRAPH ? -10 : attacking ? 4 : 0;
+    ctx.fillStyle = enemy.spec.visual.skin; ctx.fillRect(x - 4, y - 4 + windup, 8, 9);
+    ctx.fillStyle = "#77786c"; ctx.fillRect(x - 7, y - 12 + windup, 13, 11);
+    ctx.fillStyle = "#aaa58b"; ctx.fillRect(x - 3, y - 10 + windup, 6, 3);
+    return;
+  }
   if (enemy.spec.visual.weapon !== "bow") {
     const visual = {
       style: enemy.spec.visual.weapon,
@@ -2750,6 +2950,13 @@ function drawEffects() {
       ctx.fillStyle = "#5b2520"; ctx.fillRect(-14, -5, 20, 10);
       ctx.fillStyle = "#df7440"; ctx.fillRect(-8, -7, 17, 14); ctx.fillRect(8, -3, 7, 6);
       ctx.fillStyle = "#ffd079"; ctx.fillRect(-2, -3, 10, 5);
+    } else if (projectile.kind === "rock") {
+      const progress = 1 - projectile.life / Math.max(.01, projectile.initialLife || 2.2);
+      const lift = Math.sin(clamp(progress * 1.6, 0, 1) * Math.PI) * 9;
+      ctx.rotate(progress * Math.PI * 8);
+      ctx.fillStyle = "#24272088"; ctx.fillRect(-7, 7 + lift, 15, 5);
+      ctx.fillStyle = "#78796b"; ctx.fillRect(-6, -6 - lift, 12, 12);
+      ctx.fillStyle = "#a29d82"; ctx.fillRect(-3, -5 - lift, 6, 3);
     } else {
       ctx.fillStyle = "#d7c697"; ctx.fillRect(-10, -1, 19, 3);
       ctx.fillStyle = "#9fa7a2"; ctx.fillRect(8, -3, 7, 7); ctx.fillRect(-13, -4, 5, 3); ctx.fillRect(-13, 2, 5, 3);
@@ -2845,12 +3052,14 @@ ui["region-button"].addEventListener("click", openRegions);
 ui["region-close-button"].addEventListener("click", () => ui["region-dialog"].close());
 ui["inventory-dialog"].addEventListener("close", hideItemTooltip);
 ui["merchant-forge-button"].addEventListener("click", openForge);
+ui["merchant-sell-button"].addEventListener("click", sellMerchantEquipment);
 ui["forge-close-button"].addEventListener("click", closeForge);
 ui["forge-button"].addEventListener("click", reinforceSelectedEquipment);
 ui["forge-sell-button"].addEventListener("click", sellSelectedEquipment);
 ui["return-button"].addEventListener("click", returnToVillage);
-ui["advance-floor-button"].addEventListener("click", advanceEncounter);
-ui["leave-cave-button"].addEventListener("click", exitCave);
+ui["floor-advance-button"].addEventListener("click", requestFloorAdvance);
+ui["floor-stay-button"].addEventListener("click", remainOnCurrentFloor);
+ui["floor-exit-button"].addEventListener("click", exitCave);
 ui["sound-button"].addEventListener("click", () => {
   state.settings.audioEnabled = !state.settings.audioEnabled;
   ui["sound-button"].setAttribute("aria-pressed", String(state.settings.audioEnabled));
@@ -2888,12 +3097,30 @@ window.KnightFallDebug = {
   encounter: () => structuredClone(encounter),
   setFloor(floor) {
     const progress = currentRegionProgress();
-    const target = clamp(Math.floor(Number(floor) || 1), 1, currentRegionConfig().totalFloors);
+    const config = currentRegionConfig();
+    const target = clamp(Math.floor(Number(floor) || 1), 1, config.totalFloors);
+    if (!progress.expedition) startNewCaveExpedition(progress, config, { id: `debug_${config.id}` });
     progress.highestUnlockedFloor = Math.max(progress.highestUnlockedFloor, target);
     progress.selectedFloor = target;
+    progress.expedition.floor = target;
+    progress.expedition.state = target === config.totalFloors ? EXPEDITION_STATES.BOSS_PREPARATION : EXPEDITION_STATES.ACTIVE;
+    progress.expedition.floorKills[target] ||= 0;
     if (state.world.scene === "cave") startFloorEncounter(.05);
     updateUI();
     return target;
+  },
+  completeFloorObjective() {
+    const progress = currentRegionProgress();
+    const config = currentRegionConfig();
+    if (!progress.expedition) startNewCaveExpedition(progress, config, { id: `debug_${config.id}` });
+    const floor = progress.expedition.floor;
+    const target = getFloorUnlockTarget(floor, config);
+    while ((progress.expedition.floorKills[floor] || 0) < target) {
+      recordFloorKill(progress, floor, config, { expeditionId: progress.expedition.id, regionId: config.id });
+    }
+    if (farmRuntime) farmRuntime.spawnQueue.length = 0;
+    updateUI();
+    return getFloorAdvanceState(progress, floor, config);
   },
   unlockRegion(regionId) {
     const definition = GAME_CONFIG.regions[regionId];

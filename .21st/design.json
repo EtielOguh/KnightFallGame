@@ -45,8 +45,10 @@
     "Represent rarity with restrained item borders and labels while keeping procedural Canvas icons and worn layers consistent with the existing pixel geometry.",
     "Use a two-pane forge dialog with a resource ledger and selectable equipment list beside a Canvas workbench; collapse it to a single scrollable column on narrow screens.",
     "Present warrior skills as compact progression cards beside a persistent sword-mastery panel, with a three-slot Canvas hotbar separated from movement and interaction controls.",
-    "Present world travel as compact dark-fantasy region cards that clearly separate playable, locked, and planned destinations while preserving the Canvas game as the visual focus."
+    "Present world travel as compact dark-fantasy region cards that clearly separate playable, locked, and planned destinations while preserving the Canvas game as the visual focus.",
+    "Reserve separate HUD safe zones for hero status, location, enemy status, objectives, interaction prompts, and the skill hotbar; expose floor advancement as a compact objective action without pausing continuous farm.",
+    "Keep cave progression inside the existing objective card: two compact actions for Advance/Stay, one full-width Exit action after a boss, and no blocking completion modal."
   ],
   "evidence": [],
-  "generatedAt": "2026-10-24T03:13:16.190Z"
+  "generatedAt": "2026-10-29T04:00:00.000Z"
 }

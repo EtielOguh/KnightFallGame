@@ -1,7 +1,6 @@
-import { AREAS, EQUIPMENT_SLOTS, GAME_CONFIG, ITEMS, SKILLS } from "./data.js";
+import { EQUIPMENT_SLOTS, GAME_CONFIG, ITEMS, SKILLS } from "./data.js";
 import { createRegionProgressMap, getRegionConfig } from "./dungeon.js";
 import { calculateStats, createPlayer, normalizePlayer } from "./player.js";
-import { WEAPON_TYPES } from "./progression.js";
 
 export const STATE_SCHEMA_VERSION = GAME_CONFIG.save.schemaVersion;
 
@@ -14,23 +13,9 @@ export function createInitialState(playerOptions = {}) {
       scene: "village",
       caveVisits: 0,
       currentRegionId: "caverna_sombria",
-      regionProgress: createRegionProgressMap(),
-      currentArea: "ruinas_despertar",
-      bossesDefeated: {},
-      bossPity: {}
+      regionProgress: createRegionProgressMap()
     },
     settings: { audioEnabled: true },
-    systems: {
-      trainingSession: null,
-      autoFarmSession: null,
-      autoFarmSettings: {
-        autoPotion: true,
-        potionThreshold: .4,
-        preserveRarePotions: true,
-        stopWhenFull: true,
-        stopWithoutPotions: false
-      }
-    },
     flags: {},
     metadata: { createdAt: now, updatedAt: now }
   };
@@ -43,7 +28,6 @@ export function normalizeGameState(raw) {
   const defaults = createInitialState();
   const rawWorld = raw.world && typeof raw.world === "object" ? raw.world : {};
   const rawSettings = raw.settings && typeof raw.settings === "object" ? raw.settings : {};
-  const rawSystems = raw.systems && typeof raw.systems === "object" ? raw.systems : {};
   const player = normalizePlayer({
     ...raw.player,
     inventory: raw.player.inventory ?? raw.inventory,
@@ -70,25 +54,10 @@ export function normalizeGameState(raw) {
       scene: normalizeScene(rawWorld.scene ?? raw.scene),
       caveVisits: integer(rawWorld.caveVisits, raw.caveVisits ?? 0, 0, 1000000000),
       currentRegionId: GAME_CONFIG.regions[rawWorld.currentRegionId]?.status === "playable" ? rawWorld.currentRegionId : "caverna_sombria",
-      regionProgress,
-      currentArea: AREAS[rawWorld.currentArea] ? rawWorld.currentArea : defaults.world.currentArea,
-      // Campo legado neutralizado: bossVictories por região é a fonte canônica.
-      bossesDefeated: {},
-      bossPity: numberRecord(rawWorld.bossPity)
+      regionProgress
     },
     settings: {
       audioEnabled: boolean(rawSettings.audioEnabled, rawSettings.musicEnabled ?? raw.sound ?? true)
-    },
-    systems: {
-      trainingSession: normalizeTrainingSession(rawSystems.trainingSession ?? raw.trainingSession),
-      autoFarmSession: normalizeAutoFarmSession(rawSystems.autoFarmSession ?? raw.autoFarmSession),
-      autoFarmSettings: {
-        autoPotion: boolean((rawSystems.autoFarmSettings ?? raw.autoFarmSettings)?.autoPotion, defaults.systems.autoFarmSettings.autoPotion),
-        potionThreshold: finite((rawSystems.autoFarmSettings ?? raw.autoFarmSettings)?.potionThreshold, defaults.systems.autoFarmSettings.potionThreshold, .1, .9),
-        preserveRarePotions: boolean((rawSystems.autoFarmSettings ?? raw.autoFarmSettings)?.preserveRarePotions, defaults.systems.autoFarmSettings.preserveRarePotions),
-        stopWhenFull: boolean((rawSystems.autoFarmSettings ?? raw.autoFarmSettings)?.stopWhenFull, defaults.systems.autoFarmSettings.stopWhenFull),
-        stopWithoutPotions: boolean((rawSystems.autoFarmSettings ?? raw.autoFarmSettings)?.stopWithoutPotions, defaults.systems.autoFarmSettings.stopWithoutPotions)
-      }
     },
     flags: plainObject(raw.flags) || {},
     metadata: {
@@ -105,13 +74,16 @@ export function normalizeGameState(raw) {
 
 export function createSaveSnapshot(state) {
   const snapshot = normalizeGameState(state);
-  const home = GAME_CONFIG.player.startPosition;
-  snapshot.world.scene = "village";
-  snapshot.player.x = home.x;
-  snapshot.player.y = home.y;
-  snapshot.player.dirX = home.dirX;
-  snapshot.player.dirY = home.dirY;
-  snapshot.player.facing = home.dirX >= 0 ? 1 : -1;
+  if (snapshot.player.hp <= 0) {
+    const home = GAME_CONFIG.player.startPosition;
+    snapshot.world.scene = "village";
+    snapshot.player.x = home.x;
+    snapshot.player.y = home.y;
+    snapshot.player.dirX = home.dirX;
+    snapshot.player.dirY = home.dirY;
+    snapshot.player.facing = home.dirX >= 0 ? 1 : -1;
+    snapshot.player.hp = Math.max(1, Math.round(calculateStats(snapshot.player).maxHp * .6));
+  }
   snapshot.metadata.updatedAt = new Date().toISOString();
   return snapshot;
 }
@@ -171,6 +143,14 @@ export function validateGameState(state) {
       for (const [floor, kills] of Object.entries(progress?.floorKills || {})) {
         if (!Number.isInteger(Number(floor)) || Number(floor) < 1 || Number(floor) > total || !Number.isInteger(kills) || kills < 0) errors.push(`abates inválidos em ${regionId}`);
       }
+      const expedition = progress?.expedition;
+      if (expedition) {
+        const validStates = ["active", "floor_completed", "farming", "boss_preparation", "boss_pending", "boss_active", "cave_completed"];
+        if (!expedition.id || expedition.regionId !== regionId || !validStates.includes(expedition.state)) errors.push(`incursão inválida em ${regionId}`);
+        if (!Number.isInteger(expedition.floor) || expedition.floor < 1 || expedition.floor > total) errors.push(`andar de incursão inválido em ${regionId}`);
+        if (!expedition.floorKills || !expedition.farmKills || !expedition.completedFloors) errors.push(`contadores de incursão inválidos em ${regionId}`);
+        if (expedition.completed !== expedition.bossDefeated) errors.push(`conclusão de incursão inconsistente em ${regionId}`);
+      }
     }
   }
   return { valid: errors.length === 0, errors };
@@ -178,26 +158,6 @@ export function validateGameState(state) {
 
 function normalizeScene(value) {
   return value === "cave" ? "cave" : "village";
-}
-
-function normalizeTrainingSession(value) {
-  if (!value || typeof value !== "object" || !value.active) return null;
-  const startedAt = Number(value.startedAt);
-  if (!WEAPON_TYPES[value.weaponType] || !Number.isFinite(startedAt) || startedAt <= 0) return null;
-  const durationSeconds = Number(value.durationSeconds);
-  return {
-    active: true,
-    weaponType: value.weaponType,
-    startedAt,
-    ...(Number.isFinite(durationSeconds) && durationSeconds > 0 ? { durationSeconds } : {})
-  };
-}
-
-function normalizeAutoFarmSession(value) {
-  if (!value || typeof value !== "object" || !value.active) return null;
-  const startedAt = Number(value.startedAt);
-  if (!AREAS[value.regionId] || !Number.isFinite(startedAt) || startedAt <= 0 || !plainObject(value.playerSnapshot)) return null;
-  return { active: true, regionId: value.regionId, startedAt, playerSnapshot: value.playerSnapshot };
 }
 
 function numberRecord(value) {

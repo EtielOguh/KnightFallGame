@@ -2,8 +2,8 @@ import { GAME_CONFIG } from "./data.js";
 import { createSaveSnapshot, normalizeGameState, STATE_SCHEMA_VERSION, validateGameState } from "./state.js";
 
 export const SAVE_KEY = GAME_CONFIG.save.primaryKey;
-export const SAVE_VERSION = STATE_SCHEMA_VERSION;
-export const LEGACY_SAVE_KEYS = Object.freeze([...GAME_CONFIG.save.legacyKeys]);
+const SAVE_VERSION = STATE_SCHEMA_VERSION;
+const LEGACY_SAVE_KEYS = Object.freeze([...GAME_CONFIG.save.legacyKeys]);
 
 export function saveGame(gameState, options = {}) {
   const logger = options.logger || console;
@@ -55,7 +55,7 @@ export function deleteSave(options = {}) {
   }
 }
 
-export function serializeGame(gameState) {
+function serializeGame(gameState) {
   const validation = validateGameState(gameState);
   if (!validation.valid) throw new TypeError(`Estado recusado pelo save: ${validation.errors.join("; ")}`);
   return JSON.stringify({
@@ -112,6 +112,8 @@ function migrateVersionedState(state, version) {
     };
   }
   if (version < 7) migrated = migrateToV7(migrated);
+  if (version < 8) migrated = migrateToV8(migrated);
+  if (version < 9) migrated = migrateToV9(migrated);
   return normalizeGameState(migrated);
 }
 
@@ -134,16 +136,36 @@ function migrateToV7(state) {
   };
 }
 
+function migrateToV8(state) {
+  const world = state.world && typeof state.world === "object" ? state.world : {};
+  const regionProgress = world.regionProgress && typeof world.regionProgress === "object" ? world.regionProgress : {};
+  const migratedRegions = Object.fromEntries(Object.entries(regionProgress).map(([regionId, progress]) => [regionId, {
+    ...(progress && typeof progress === "object" ? progress : {}),
+    // O progresso antigo era permanente por andar e não representava uma
+    // incursão isolada. Ele permanece como histórico, mas não libera o chefe.
+    expedition: null
+  }]));
+  return {
+    ...state,
+    schemaVersion: 8,
+    world: { ...world, scene: "village", regionProgress: migratedRegions }
+  };
+}
+
+function migrateToV9(state) {
+  // A normalização ainda lê bossesDefeated para transferir vitórias antigas
+  // a regionProgress. Os demais campos legados são deliberadamente ignorados e
+  // deixam de ser gravados no snapshot canônico da versão 9.
+  return { ...state, schemaVersion: 9 };
+}
+
 function migrateVisualV1(state) {
   return normalizeGameState({
     ...state,
     world: {
       scene: state.scene,
       caveVisits: state.caveVisits,
-      currentArea: "ruinas_despertar",
-      regionProgress: {},
-      bossesDefeated: {},
-      bossPity: {}
+      regionProgress: {}
     },
     settings: { audioEnabled: state.sound }
   });
@@ -154,12 +176,7 @@ function migrateLegacyTerminal(state) {
     ...state,
     player: { ...state.player, inventory: state.inventory },
     world: { ...state.world, scene: "village", caveVisits: 0 },
-    settings: { audioEnabled: state.settings?.musicEnabled ?? true },
-    systems: {
-      trainingSession: state.trainingSession,
-      autoFarmSession: state.autoFarmSession,
-      autoFarmSettings: state.autoFarmSettings
-    }
+    settings: { audioEnabled: state.settings?.musicEnabled ?? true }
   });
 }
 

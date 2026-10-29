@@ -11,6 +11,19 @@ export const ENEMY_STATES = Object.freeze({
   DYING: "dying"
 });
 
+export const EXPEDITION_STATES = Object.freeze({
+  ACTIVE: "active",
+  FLOOR_COMPLETED: "floor_completed",
+  FARMING: "farming",
+  BOSS_PREPARATION: "boss_preparation",
+  BOSS_PENDING: "boss_pending",
+  BOSS_ACTIVE: "boss_active",
+  CAVE_COMPLETED: "cave_completed"
+});
+
+const EXPEDITION_STATE_VALUES = new Set(Object.values(EXPEDITION_STATES));
+let expeditionSequence = 0;
+
 export function createCaveProgress(raw = {}, legacyKills = 0) {
   return createRegionProgress(raw, GAME_CONFIG.firstCave, legacyKills);
 }
@@ -25,21 +38,13 @@ export function getRegionConfig(regionId) {
 export function createRegionProgress(raw = {}, config = GAME_CONFIG.firstCave, legacyKills = 0) {
   const total = config.totalFloors;
   const legacyFloor = Math.max(1, Math.min(total, Math.floor(Number(legacyKills) || 0) + 1));
-  const highestUnlockedFloor = integer(raw.highestUnlockedFloor, legacyFloor, 1, total);
-  const selectedFloor = integer(raw.selectedFloor ?? raw.currentExpeditionFloor, highestUnlockedFloor, 1, highestUnlockedFloor);
+  const expedition = normalizeExpedition(raw.expedition, config);
+  const highestUnlockedFloor = Math.max(integer(raw.highestUnlockedFloor, legacyFloor, 1, total), expedition?.floor || 1);
+  const selectedFloor = expedition?.floor
+    || integer(raw.selectedFloor ?? raw.currentExpeditionFloor, highestUnlockedFloor, 1, highestUnlockedFloor);
   const floorKills = numberRecord(raw.floorKills, total);
   const floorObjectivesCompleted = floorBooleanRecord(raw.floorObjectivesCompleted, total);
-  // Saves anteriores já tinham conquistado esses andares. A migração não exige
-  // que o jogador refaça os novos objetivos de abate.
-  for (let floor = 1; floor < highestUnlockedFloor; floor += 1) {
-    floorObjectivesCompleted[floor] = true;
-    floorKills[floor] = Math.max(floorKills[floor] || 0, getFloorUnlockTarget(floor, config));
-  }
   const bossVictories = integer(raw.bossVictories, 0, 0, 1000000);
-  if (bossVictories > 0) {
-    floorObjectivesCompleted[total] = true;
-    floorKills[total] = Math.max(floorKills[total] || 0, bossVictories);
-  }
   return {
     highestUnlockedFloor,
     selectedFloor,
@@ -50,7 +55,8 @@ export function createRegionProgress(raw = {}, config = GAME_CONFIG.firstCave, l
     uniqueRewardsClaimed: {
       ...booleanRecord(raw.uniqueRewardsClaimed),
       ...(config.id === "caverna_sombria" ? { goblinKingFirstVictory: Boolean(raw.uniqueRewardsClaimed?.goblinKingFirstVictory) } : {})
-    }
+    },
+    expedition
   };
 }
 
@@ -84,19 +90,36 @@ export function regionUnlockStatus(world, regionId) {
 export function getCaveTier(floor, config = GAME_CONFIG.firstCave) {
   const normalizedFloor = integer(floor, 1, 1, config.totalFloors);
   const tier = config.tiers.find(entry => normalizedFloor >= entry.minFloor && normalizedFloor <= entry.maxFloor);
-  if (!tier) throw new RangeError(`Nenhuma faixa configurada para o andar ${normalizedFloor}.`);
+  if (!tier) throw new RangeError(`Nenhuma faixa comum configurada para o andar ${normalizedFloor}.`);
   return tier;
+}
+
+function getBossTier(config = GAME_CONFIG.firstCave) {
+  if (!config.boss || config.boss.archetype !== "boss") throw new RangeError(`Chefe não configurado para ${config.id}.`);
+  return config.boss;
+}
+
+export function getFloorRule(floor, config = GAME_CONFIG.firstCave) {
+  const normalizedFloor = integer(floor, 1, 1, config.totalFloors);
+  const rule = config.farm?.floorRules?.find(entry => entry.floor === normalizedFloor);
+  if (!rule) throw new RangeError(`Regra de dificuldade ausente para o andar ${normalizedFloor}.`);
+  return rule;
 }
 
 export function createEncounterSpec(floor, config = GAME_CONFIG.firstCave, roleId = null) {
   const normalizedFloor = integer(floor, 1, 1, config.totalFloors);
-  const tier = getCaveTier(normalizedFloor, config);
   const requestedRole = typeof roleId === "string" ? roleId : roleId?.roleId;
-  const role = tier.archetype === "boss" ? null : config.farm?.roles?.[requestedRole] || null;
-  const offset = normalizedFloor - tier.minFloor;
-  const hp = Math.round((tier.stats.hpBase + offset * tier.stats.hpPerFloor) * (role?.hp || 1));
-  const attack = Math.round((tier.stats.attackBase + offset * tier.stats.attackPerFloor) * (role?.attack || 1));
-  const name = tier.names[offset % tier.names.length];
+  const boss = requestedRole === "boss";
+  const tier = boss ? getBossTier(config) : getCaveTier(normalizedFloor, config);
+  const role = boss ? null : config.farm?.roles?.[requestedRole] || null;
+  const rule = getFloorRule(normalizedFloor, config);
+  const multipliers = boss ? { hp: 1, attack: 1, defense: 1 } : rule.multipliers;
+  const offset = normalizedFloor - (tier.minFloor || normalizedFloor);
+  const hp = Math.max(1, Math.round(tier.stats.hpBase * multipliers.hp * (role?.hp || 1)));
+  const attack = Math.max(1, Math.round(tier.stats.attackBase * multipliers.attack * (role?.attack || 1)));
+  const defense = Math.max(0, Math.round((tier.stats.defenseBase || 0) * multipliers.defense * (role?.defense || 1)));
+  const names = role?.names?.length ? role.names : tier.names;
+  const name = names[Math.max(0, offset) % names.length];
   const rewardMultiplier = role?.reward || 1;
   return {
     caveId: config.id,
@@ -105,11 +128,12 @@ export function createEncounterSpec(floor, config = GAME_CONFIG.firstCave, roleI
     tierId: tier.id,
     tierLabel: tier.label,
     archetype: role?.archetype || tier.archetype,
-    roleId: requestedRole || tier.archetype,
-    boss: tier.archetype === "boss",
+    roleId: boss ? "boss" : requestedRole || tier.archetype,
+    boss,
     name,
     hp,
     attack,
+    defense,
     speed: Math.round(tier.stats.speed * (role?.speed || 1)),
     ai: { ...tier.ai, ...(role?.ai || {}) },
     rewards: { ...tier.rewards, multiplier: (Number(tier.rewards.multiplier) || 1) * rewardMultiplier },
@@ -118,109 +142,242 @@ export function createEncounterSpec(floor, config = GAME_CONFIG.firstCave, roleI
     firstVictoryKey: tier.firstVictoryKey || (config.id === "caverna_sombria" ? "goblinKingFirstVictory" : `${config.id}FirstVictory`),
     visual: {
       ...tier.visual,
+      ...(role?.visual || {}),
       species: tier.visual.speciesByName?.[name] || tier.visual.species
     }
   };
 }
 
-export function beginCaveExpedition(progress, config = GAME_CONFIG.firstCave) {
-  const floor = progress.selectedFloor || progress.highestUnlockedFloor || 1;
-  progress.selectedFloor = integer(floor, 1, 1, Math.min(config.totalFloors, progress.highestUnlockedFloor || 1));
-  return progress.selectedFloor;
+function createExpedition(regionId, config, options = {}) {
+  expeditionSequence += 1;
+  const now = Date.now();
+  return {
+    id: options.id || `expedition_${regionId}_${now}_${expeditionSequence}`,
+    regionId,
+    floor: 1,
+    state: EXPEDITION_STATES.ACTIVE,
+    floorKills: {},
+    farmKills: {},
+    completedFloors: {},
+    bossUnlocked: false,
+    bossSpawned: false,
+    bossDefeated: false,
+    completed: false,
+    startedAt: now,
+    updatedAt: now
+  };
 }
 
-export function advanceCaveFloor(progress, completedFloor, config = GAME_CONFIG.firstCave) {
-  const total = config.totalFloors;
-  const floor = integer(completedFloor, 1, 1, total);
-  progress.floorCompletions[floor] = (progress.floorCompletions[floor] || 0) + 1;
-  if (floor < total) {
-    progress.floorKills[floor] = Math.max(progress.floorKills[floor] || 0, getFloorUnlockTarget(floor, config));
-    progress.floorObjectivesCompleted[floor] = true;
-    progress.highestUnlockedFloor = Math.max(progress.highestUnlockedFloor, floor + 1);
-  } else {
-    progress.highestUnlockedFloor = total;
-    progress.selectedFloor = total;
-    progress.bossVictories += 1;
-    progress.floorKills[total] = Math.max(progress.floorKills[total] || 0, progress.bossVictories);
-    progress.floorObjectivesCompleted[total] = true;
-  }
-  return { completedFloor: floor, nextFloor: floor < total ? floor + 1 : null, bossDefeated: floor === total };
+export function beginCaveExpedition(progress, config = GAME_CONFIG.firstCave, options = {}) {
+  if (!progress.expedition || options.forceNew) progress.expedition = createExpedition(config.id, config, options);
+  progress.selectedFloor = progress.expedition.floor;
+  return progress.expedition.floor;
+}
+
+export function startNewCaveExpedition(progress, config = GAME_CONFIG.firstCave, options = {}) {
+  progress.expedition = createExpedition(config.id, config, options);
+  progress.selectedFloor = 1;
+  return progress.expedition;
 }
 
 export function abandonCaveExpedition(progress) {
-  return progress.selectedFloor;
+  return progress.expedition?.floor || progress.selectedFloor || 1;
+}
+
+export function finishCaveExit(progress) {
+  if (!progress.expedition?.completed) return false;
+  progress.expedition = null;
+  progress.selectedFloor = 1;
+  return true;
 }
 
 export function getFloorUnlockTarget(floor, config = GAME_CONFIG.firstCave) {
-  const normalizedFloor = integer(floor, 1, 1, config.totalFloors);
-  const configured = config.farm?.unlockKills?.[normalizedFloor - 1];
-  return integer(configured, 1, 1, 1000000);
+  return getFloorRule(floor, config).kills;
+}
+
+export function getFloorAdvanceState(progress, floor, config = GAME_CONFIG.firstCave) {
+  const expedition = progress?.expedition;
+  const normalizedFloor = integer(floor, expedition?.floor || 1, 1, config.totalFloors);
+  const target = getFloorUnlockTarget(normalizedFloor, config);
+  const kills = Math.max(0, Math.floor(Number(expedition?.floorKills?.[normalizedFloor]) || 0));
+  const completed = Boolean(expedition?.completedFloors?.[normalizedFloor] || kills >= target);
+  const nextFloor = normalizedFloor < config.totalFloors ? normalizedFloor + 1 : null;
+  const available = Boolean(expedition && expedition.floor === normalizedFloor && nextFloor && completed
+    && [EXPEDITION_STATES.FLOOR_COMPLETED, EXPEDITION_STATES.FARMING].includes(expedition.state));
+  return { floor: normalizedFloor, kills, target, completed, nextFloor, available, state: expedition?.state || null };
 }
 
 export function getFloorFarmConfig(floor, config = GAME_CONFIG.firstCave) {
   const normalizedFloor = integer(floor, 1, 1, config.totalFloors);
-  const band = config.farm?.bands?.find(entry => normalizedFloor >= entry.minFloor && normalizedFloor <= entry.maxFloor);
-  if (band) return band;
-  return { minFloor: normalizedFloor, maxFloor: normalizedFloor, maxActive: 1, waveSize: [1, 1], threatBudget: [1, 1], roles: { [getCaveTier(normalizedFloor, config).archetype]: 1 } };
+  const band = config.farm?.bands?.find(entry => normalizedFloor >= entry.minFloor && normalizedFloor <= entry.maxFloor) || {};
+  const rule = getFloorRule(normalizedFloor, config);
+  return {
+    minFloor: normalizedFloor,
+    maxFloor: normalizedFloor,
+    ...band,
+    waveSize: [...rule.waveSize],
+    maxActive: rule.maxActive,
+    maxRanged: rule.maxRanged,
+    multipliers: { ...rule.multipliers },
+    kills: rule.kills,
+    roles: band.roles || { [getCaveTier(normalizedFloor, config).archetype]: 1 }
+  };
 }
 
 export function createWavePlan(floor, config = GAME_CONFIG.firstCave, random = Math.random) {
   const normalizedFloor = integer(floor, 1, 1, config.totalFloors);
-  const spec = createEncounterSpec(normalizedFloor, config);
-  if (spec.boss) return ["boss"];
   const band = getFloorFarmConfig(normalizedFloor, config);
   const roles = Object.entries(band.roles || { common: 1 }).filter(([, weight]) => Number(weight) > 0);
   const [minimumSize, maximumSize] = band.waveSize || [1, 1];
   const desiredSize = randomInteger(minimumSize, maximumSize, random);
-  const [minimumThreat, maximumThreat] = band.threatBudget || [1, desiredSize];
+  const [minimumThreat, maximumThreat] = band.threatBudget || [minimumSize, maximumSize * 2];
   const threatBudget = minimumThreat + random() * Math.max(0, maximumThreat - minimumThreat);
   const plan = [];
   let threat = 0;
+  let rangedCount = 0;
   for (let index = 0; index < desiredSize; index += 1) {
-    const affordable = roles.filter(([roleId]) => threat + (config.farm?.roles?.[roleId]?.threat || 1) <= threatBudget + .001);
+    const affordable = roles.filter(([candidateRoleId]) => {
+      const role = config.farm?.roles?.[candidateRoleId];
+      const ranged = role?.archetype === "archer" || role?.archetype === "thrower";
+      return threat + (role?.threat || 1) <= threatBudget + .001
+        && (!ranged || rangedCount < (band.maxRanged ?? desiredSize));
+    });
     const cheapest = [...roles].sort(([left], [right]) => (config.farm?.roles?.[left]?.threat || 1) - (config.farm?.roles?.[right]?.threat || 1))[0];
     const pool = affordable.length ? affordable : plan.length < minimumSize && cheapest ? [cheapest] : [];
     if (!pool.length) break;
-    const roleId = weightedChoice(pool, random);
-    plan.push(roleId);
-    threat += config.farm?.roles?.[roleId]?.threat || 1;
+    const selectedRoleId = weightedChoice(pool, random);
+    plan.push(selectedRoleId);
+    const role = config.farm?.roles?.[selectedRoleId];
+    threat += role?.threat || 1;
+    if (role?.archetype === "archer" || role?.archetype === "thrower") rangedCount += 1;
   }
   return plan.length ? plan : [roles[0]?.[0] || "common"];
 }
 
-export function selectCaveFloor(progress, floor, config = GAME_CONFIG.firstCave) {
-  const target = integer(floor, 0, 1, config.totalFloors);
-  if (!target || target > progress.highestUnlockedFloor) return { ok: false, reason: "Andar ainda não desbloqueado." };
-  progress.selectedFloor = target;
-  return { ok: true, floor: target };
+export function advanceCaveFloor(progress, completedFloor, config = GAME_CONFIG.firstCave) {
+  const expedition = progress.expedition;
+  const floor = integer(completedFloor, expedition?.floor || 1, 1, config.totalFloors);
+  if (!expedition || expedition.floor !== floor || floor >= config.totalFloors
+    || ![EXPEDITION_STATES.FLOOR_COMPLETED, EXPEDITION_STATES.FARMING].includes(expedition.state)) {
+    return { ok: false, reason: "O próximo andar ainda não está disponível." };
+  }
+  expedition.floor = floor + 1;
+  expedition.state = expedition.floor === config.totalFloors ? EXPEDITION_STATES.BOSS_PREPARATION : EXPEDITION_STATES.ACTIVE;
+  expedition.updatedAt = Date.now();
+  progress.selectedFloor = expedition.floor;
+  progress.floorCompletions[floor] = (progress.floorCompletions[floor] || 0) + 1;
+  progress.highestUnlockedFloor = Math.max(progress.highestUnlockedFloor, expedition.floor);
+  return { ok: true, completedFloor: floor, nextFloor: expedition.floor, bossDefeated: false };
+}
+
+export function stayOnCompletedFloor(progress, config = GAME_CONFIG.firstCave) {
+  const expedition = progress.expedition;
+  if (!expedition || expedition.floor >= config.totalFloors
+    || ![EXPEDITION_STATES.FLOOR_COMPLETED, EXPEDITION_STATES.FARMING].includes(expedition.state)) {
+    return { ok: false, reason: "Este andar ainda não foi concluído." };
+  }
+  expedition.state = EXPEDITION_STATES.FARMING;
+  expedition.updatedAt = Date.now();
+  return { ok: true, floor: expedition.floor };
 }
 
 export function recordFloorKill(progress, floor, config = GAME_CONFIG.firstCave, options = {}) {
+  const expedition = progress.expedition;
   const normalizedFloor = integer(floor, 1, 1, config.totalFloors);
-  progress.floorKills[normalizedFloor] = (progress.floorKills[normalizedFloor] || 0) + 1;
-  const boss = Boolean(options.boss || normalizedFloor === config.totalFloors);
-  if (boss) {
+  if (!expedition || expedition.regionId !== config.id || expedition.floor !== normalizedFloor
+    || (options.expeditionId && options.expeditionId !== expedition.id)
+    || (options.regionId && options.regionId !== config.id)) {
+    return { counted: false, reason: "enemy_outside_expedition", floor: normalizedFloor };
+  }
+
+  if (options.boss) {
+    if (expedition.state !== EXPEDITION_STATES.BOSS_ACTIVE || expedition.bossDefeated) {
+      return { counted: false, reason: "boss_already_resolved", floor: normalizedFloor, bossDefeated: expedition.bossDefeated };
+    }
+    expedition.bossDefeated = true;
+    expedition.completed = true;
+    expedition.state = EXPEDITION_STATES.CAVE_COMPLETED;
+    expedition.completedFloors[normalizedFloor] = true;
+    expedition.updatedAt = Date.now();
     progress.floorCompletions[normalizedFloor] = (progress.floorCompletions[normalizedFloor] || 0) + 1;
     progress.bossVictories += 1;
+    progress.highestUnlockedFloor = config.totalFloors;
     progress.floorObjectivesCompleted[normalizedFloor] = true;
-    progress.highestUnlockedFloor = Math.max(progress.highestUnlockedFloor, normalizedFloor);
-    return { floor: normalizedFloor, kills: progress.floorKills[normalizedFloor], target: 1, unlocked: false, bossDefeated: true };
+    return { counted: true, floor: normalizedFloor, kills: expedition.floorKills[normalizedFloor] || 0, target: getFloorUnlockTarget(normalizedFloor, config), unlocked: false, bossDefeated: true, caveCompleted: true };
   }
+
+  if (expedition.state === EXPEDITION_STATES.FARMING) {
+    expedition.farmKills[normalizedFloor] = (expedition.farmKills[normalizedFloor] || 0) + 1;
+    expedition.updatedAt = Date.now();
+    return { counted: true, farmOnly: true, floor: normalizedFloor, kills: expedition.floorKills[normalizedFloor] || 0, target: getFloorUnlockTarget(normalizedFloor, config), unlocked: false, bossDefeated: false };
+  }
+
+  const countableStates = [EXPEDITION_STATES.ACTIVE, EXPEDITION_STATES.BOSS_PREPARATION];
+  if (!countableStates.includes(expedition.state)) {
+    return { counted: false, reason: "objective_already_completed", floor: normalizedFloor, kills: expedition.floorKills[normalizedFloor] || 0, target: getFloorUnlockTarget(normalizedFloor, config) };
+  }
+
   const target = getFloorUnlockTarget(normalizedFloor, config);
-  const wasCompleted = Boolean(progress.floorObjectivesCompleted[normalizedFloor]);
-  const completed = progress.floorKills[normalizedFloor] >= target;
+  expedition.floorKills[normalizedFloor] = Math.min(target, (expedition.floorKills[normalizedFloor] || 0) + 1);
+  expedition.updatedAt = Date.now();
+  const kills = expedition.floorKills[normalizedFloor];
+  const completed = kills >= target;
   if (completed) {
+    expedition.completedFloors[normalizedFloor] = true;
+    progress.floorKills[normalizedFloor] = Math.max(progress.floorKills[normalizedFloor] || 0, target);
     progress.floorObjectivesCompleted[normalizedFloor] = true;
-    if (normalizedFloor < config.totalFloors) progress.highestUnlockedFloor = Math.max(progress.highestUnlockedFloor, normalizedFloor + 1);
+    if (normalizedFloor === config.totalFloors) {
+      expedition.bossUnlocked = true;
+      expedition.state = EXPEDITION_STATES.BOSS_PENDING;
+    } else {
+      expedition.state = EXPEDITION_STATES.FLOOR_COMPLETED;
+      progress.highestUnlockedFloor = Math.max(progress.highestUnlockedFloor, normalizedFloor + 1);
+    }
   }
   return {
+    counted: true,
     floor: normalizedFloor,
-    kills: progress.floorKills[normalizedFloor],
+    kills,
     target,
-    unlocked: completed && !wasCompleted && normalizedFloor < config.totalFloors,
+    unlocked: completed && normalizedFloor < config.totalFloors,
     nextFloor: completed && normalizedFloor < config.totalFloors ? normalizedFloor + 1 : null,
+    bossUnlocked: completed && normalizedFloor === config.totalFloors,
     bossDefeated: false
   };
+}
+
+export function canSpawnCommonEnemies(progress) {
+  return Boolean(progress?.expedition && [
+    EXPEDITION_STATES.ACTIVE,
+    EXPEDITION_STATES.FARMING,
+    EXPEDITION_STATES.BOSS_PREPARATION
+  ].includes(progress.expedition.state));
+}
+
+export function markBossSpawned(progress, config = GAME_CONFIG.firstCave, options = {}) {
+  const expedition = progress?.expedition;
+  const activeCommonCount = Math.max(0, Math.floor(Number(options.activeCommonCount) || 0));
+  if (!expedition || expedition.floor !== config.totalFloors || expedition.state !== EXPEDITION_STATES.BOSS_PENDING
+    || expedition.bossSpawned || expedition.bossDefeated || activeCommonCount > 0) {
+    return { ok: false, reason: activeCommonCount > 0 ? "Ainda existem ameaças comuns ativas." : "Boss não está pronto para ser invocado." };
+  }
+  expedition.bossSpawned = true;
+  expedition.state = EXPEDITION_STATES.BOSS_ACTIVE;
+  expedition.updatedAt = Date.now();
+  return { ok: true, expeditionId: expedition.id, floor: expedition.floor };
+}
+
+export function prepareExpeditionAfterLoad(progress) {
+  const expedition = progress?.expedition;
+  if (!expedition) return null;
+  // Entidades não são persistidas. Um chefe salvo em combate retorna inteiro,
+  // mas a trava de invocação é rearmada para que exista apenas uma instância.
+  if (expedition.state === EXPEDITION_STATES.BOSS_ACTIVE && !expedition.bossDefeated) {
+    expedition.state = EXPEDITION_STATES.BOSS_PENDING;
+    expedition.bossSpawned = false;
+  }
+  expedition.updatedAt = Date.now();
+  return expedition;
 }
 
 export function grantEncounterRewards(progress, spec, random = Math.random) {
@@ -239,6 +396,31 @@ export function grantEncounterRewards(progress, spec, random = Math.random) {
     };
   }
   return { xp, coins, loot, firstVictory };
+}
+
+function normalizeExpedition(raw, config) {
+  if (!raw || typeof raw !== "object" || raw.regionId !== config.id || typeof raw.id !== "string" || !raw.id) return null;
+  const floor = integer(raw.floor, 1, 1, config.totalFloors);
+  let state = EXPEDITION_STATE_VALUES.has(raw.state) ? raw.state : floor === config.totalFloors ? EXPEDITION_STATES.BOSS_PREPARATION : EXPEDITION_STATES.ACTIVE;
+  const floorKills = numberRecord(raw.floorKills, config.totalFloors);
+  const completedFloors = floorBooleanRecord(raw.completedFloors, config.totalFloors);
+  const bossDefeated = Boolean(raw.bossDefeated || raw.completed);
+  if (bossDefeated) state = EXPEDITION_STATES.CAVE_COMPLETED;
+  return {
+    id: raw.id,
+    regionId: config.id,
+    floor,
+    state,
+    floorKills,
+    farmKills: numberRecord(raw.farmKills, config.totalFloors),
+    completedFloors,
+    bossUnlocked: Boolean(raw.bossUnlocked || completedFloors[config.totalFloors]),
+    bossSpawned: Boolean(raw.bossSpawned && !bossDefeated),
+    bossDefeated,
+    completed: bossDefeated,
+    startedAt: finiteTimestamp(raw.startedAt),
+    updatedAt: finiteTimestamp(raw.updatedAt)
+  };
 }
 
 function booleanRecord(value) {
@@ -277,6 +459,11 @@ function weightedChoice(entries, random) {
     if (roll <= 0) return id;
   }
   return entries[entries.length - 1][0];
+}
+
+function finiteTimestamp(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : Date.now();
 }
 
 function integer(value, fallback, min, max) {

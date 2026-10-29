@@ -29,7 +29,9 @@ Não há dependências de produção nem processo de build.
 - `M`: abrir o mercador enquanto estiver na clareira
 - `Esc`: fechar painéis
 
-Na Clareira do Corvo, fale com Bram para comprar poções, recuperar vida e melhorar permanentemente ataque e armadura. Esses treinos possuem limite de oito compras por atributo; saves antigos acima do limite conservam todo o poder adquirido. O mapa permite escolher qualquer andar já desbloqueado. Na Caverna Sombria, ondas reaparecem continuamente, abates liberam o próximo andar sem forçar o avanço e o Rei Goblin é repetível. Derrotá-lo libera o Bosque das Cinzas.
+Na Clareira do Corvo, fale com Bram para comprar poções, recuperar vida, treinar atributos, comprar equipamentos e vender/reciclar peças da mochila. Itens comuns retornam principalmente moedas; raridades superiores também recuperam materiais de forja. Os treinos possuem limite de oito compras por atributo e saves antigos acima do limite conservam todo o poder adquirido.
+
+Cada incursão possui dez andares. Ao cumprir a meta dos andares 1–9, o HUD oferece `Avançar` ou `Permanecer`; permanecer reativa o farm sem reiniciar a meta e o avanço continua acessível. No andar 10, vinte mortes comuns interrompem novos spawns, as ameaças restantes precisam ser derrotadas e então o Boss surge uma única vez. Após a vitória, o jogador pode recolher itens e sair quando desejar. Uma nova entrada começa outra incursão no andar 1. A primeira vitória contra o Rei Goblin libera o Bosque das Cinzas.
 
 ## Sistemas
 
@@ -38,20 +40,21 @@ Na Clareira do Corvo, fale com Bram para comprar poções, recuperar vida e melh
 - Movimento em oito direções com teclado e controles de toque
 - Combate em tempo real com golpe descendente de espada, esquiva, dano, defesa, invulnerabilidade breve e poções
 - Habilidades ativas com vigor, cooldown, fases sincronizadas e efeitos procedurais
-- Pontos de habilidade, passivas de guerreiro e maestria de espadas por acertos efetivos
+- Pontos de habilidade em níveis alternados, requisitos de nível/maestria, passivas de guerreiro e maestria de espadas por acertos efetivos
 - Regiões com desbloqueio configurável, progresso independente e retorno seguro à vila
-- Farm contínuo na Caverna Sombria, ondas de 2–4 ameaças, metas persistentes e escolha manual de andar
+- Incursões repetíveis de 10 andares, 128 eliminações comuns, ondas de 2–6 ameaças e estados explícitos
+- Farm contínuo opcional em andar concluído, com avanço posterior no próprio HUD
 - IDs, mortes, recompensas e projéteis independentes por inimigo, com limites de entidades configuráveis
 - Bosque das Cinzas completo com 10 estágios, identidade visual, obstáculos e inimigos próprios
-- Quatro arquétipos de goblin com IA por estados, navegação A*, projéteis e desvio de obstáculos
+- Goblins comuns, rápidos, guerreiros, arqueiros, arremessadores de pedra e elites com IA por estados, navegação A*, projéteis e desvio de obstáculos
 - Rei Goblin procedural com três padrões, fase 2, barra de chefe e prêmio único de primeira vitória
 - Recompensas em ouro, XP e loot protegidas contra concessão duplicada
 - Forja de +0 a +10 com minério, aço, essência goblin, seiva corrompida, cinza viva e cristal raro
-- Compra e venda de equipamentos usando a moeda e o inventário canônicos
+- Compra, venda e reciclagem de equipamentos usando a moeda, os materiais e o inventário canônicos
 - Inventário responsivo, comparação, itens novos e seis slots de equipamento
 - Cinco raridades e atributos de equipamento aplicados diretamente ao combate
 - Ícones e camadas vestidas de arma, capacete, peitoral e botas desenhados proceduralmente
-- Persistência automática no `localStorage`
+- Persistência automática no `localStorage`, incluindo incursão ativa, andar, estado, metas e Boss
 - Interface responsiva, tela cheia e opção de som
 
 ## Estrutura
@@ -100,7 +103,8 @@ KnightFallDebug.exitCave()
 KnightFallDebug.addCoins(100)
 KnightFallDebug.enemy()
 KnightFallDebug.encounter()
-KnightFallDebug.setFloor(20)
+KnightFallDebug.setFloor(10)
+KnightFallDebug.completeFloorObjective()
 KnightFallDebug.damageEnemy(100)
 KnightFallDebug.stats()
 KnightFallDebug.openInventory()

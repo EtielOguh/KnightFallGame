@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 
 import { EQUIPMENT_SLOTS, GAME_CONFIG, ITEMS, SKILLS } from "../js/data.js";
 import {
-  abandonCaveExpedition, advanceCaveFloor, beginCaveExpedition, createCaveProgress,
+  EXPEDITION_STATES, abandonCaveExpedition, advanceCaveFloor, beginCaveExpedition,
+  canSpawnCommonEnemies, createCaveProgress,
   createEncounterSpec, createRegionProgress, createWavePlan, getCaveTier, getFloorFarmConfig,
-  getFloorUnlockTarget, getRegionConfig, grantEncounterRewards, recordFloorKill,
-  regionUnlockStatus, selectCaveFloor
+  finishCaveExit, getFloorAdvanceState, getFloorRule, getFloorUnlockTarget, getRegionConfig, grantEncounterRewards,
+  markBossSpawned, prepareExpeditionAfterLoad, recordFloorKill, regionUnlockStatus,
+  startNewCaveExpedition, stayOnCompletedFloor
 } from "../js/dungeon.js";
 import {
   activeEnemyCap, addOwnedProjectile, claimEnemyReward, createFarmRuntime,
@@ -14,7 +16,7 @@ import {
 } from "../js/farm.js";
 import { rollLoot } from "../js/loot.js";
 import {
-  calculateSalePrice, enhanceEquipment, getEnhancementCost, purchaseEquipment, sellEquipment
+  calculateSalePrice, enhanceEquipment, getEnhancementCost, getSaleReturn, purchaseEquipment, sellEquipment
 } from "../js/forge.js";
 import {
   addInventoryItem, calculateItemStats, calculateStatBreakdown, calculateStats, canEquipItem,
@@ -135,7 +137,7 @@ test("save legado envelopado preserva inventário, equipamento, atributos e mund
   assert.equal(state.player.equipment.weapon, "blade-1");
   assert.equal(state.player.inventory.length, 2);
   assert.equal(inventoryCount(state.player, "pocao_menor"), 4);
-  assert.equal(state.world.currentArea, "cavernas_sussurro");
+  assert.equal("currentArea" in state.world, false);
   assert.equal(state.world.regionProgress.caverna_sombria.highestUnlockedFloor, 1);
   assert.equal(state.world.regionProgress.bosque_cinzas.highestUnlockedFloor, 1);
   assert.equal(state.settings.audioEnabled, false);
@@ -157,9 +159,10 @@ test("loader ignora save primário corrompido, registra erro e usa legado válid
   assert.equal(messages.length, 1);
 });
 
-test("save atual faz round-trip, valida e sempre grava retorno seguro à vila", () => {
+test("save atual faz round-trip e preserva uma incursão ativa", () => {
   const storage = new MemoryStorage();
   const original = createInitialState({ name: "Aldric Teste" });
+  const expedition = startNewCaveExpedition(original.world.regionProgress.caverna_sombria, GAME_CONFIG.firstCave, { id: "save-active" });
   original.world.scene = "cave";
   original.player.x = 800;
   original.player.y = 160;
@@ -171,11 +174,9 @@ test("save atual faz round-trip, valida e sempre grava retorno seguro à vila", 
   assert.equal(restored.player.name, "Aldric Teste");
   assert.equal(restored.player.coins, 321);
   assert.equal(restored.player.progression.kills, 12);
-  assert.equal(restored.world.scene, "village");
-  assert.deepEqual(
-    { x: restored.player.x, y: restored.player.y },
-    { x: GAME_CONFIG.player.startPosition.x, y: GAME_CONFIG.player.startPosition.y }
-  );
+  assert.equal(restored.world.scene, "cave");
+  assert.deepEqual({ x: restored.player.x, y: restored.player.y }, { x: 800, y: 160 });
+  assert.equal(restored.world.regionProgress.caverna_sombria.expedition.id, expedition.id);
 });
 
 test("normalização limita valores inválidos e progressão usa a curva central", () => {
@@ -201,10 +202,7 @@ test("normalização limita valores inválidos e progressão usa a curva central
   assert.equal(state.player.coins, 0);
   assert.equal(state.player.hp, calculateStats(state.player).maxHp);
   assert.equal(inventoryCount(state.player, "pocao_menor"), 0);
-  assert.equal(state.systems.trainingSession, null);
-  assert.equal(state.systems.autoFarmSession, null);
-  assert.equal(state.systems.autoFarmSettings.potionThreshold, .9);
-  assert.equal(state.systems.autoFarmSettings.autoPotion, true);
+  assert.equal("systems" in state, false);
 
   const needed = playerExpRequired(1);
   const skillPointsBefore = state.player.skillProgression.points;
@@ -213,7 +211,10 @@ test("normalização limita valores inválidos e progressão usa a curva central
   assert.equal(state.player.level, 2);
   assert.equal(state.player.baseStats.maxHp, 112);
   assert.equal(state.player.baseStats.attack, 14);
-  assert.equal(state.player.skillProgression.points, skillPointsBefore + GAME_CONFIG.progression.skillPointsPerLevel);
+  assert.equal(state.player.skillProgression.points, skillPointsBefore);
+  grantPlayerExperience(state.player, playerExpRequired(2));
+  assert.equal(state.player.level, 3);
+  assert.equal(state.player.skillProgression.points, skillPointsBefore + 1);
 });
 
 test("equipamento altera apenas o atributo derivado, sem duplicar o ataque base", () => {
@@ -290,19 +291,47 @@ test("loot respeita nível mínimo e usa fonte aleatória injetável", () => {
   assert.deepEqual(rollLoot(table, 2, () => .75).map(drop => drop.definitionId), ["espada_ferro"]);
 });
 
-test("as faixas dos 20 andares selecionam arquétipos por configuração", () => {
-  assert.equal(getCaveTier(1).archetype, "common");
-  assert.equal(getCaveTier(5).archetype, "common");
-  assert.equal(getCaveTier(6).archetype, "warrior");
-  assert.equal(getCaveTier(10).archetype, "warrior");
-  assert.equal(getCaveTier(11).archetype, "archer");
-  assert.equal(getCaveTier(15).archetype, "archer");
-  assert.equal(getCaveTier(16).archetype, "elite");
-  assert.equal(getCaveTier(19).archetype, "elite");
-  assert.equal(createEncounterSpec(20).boss, true);
+test("loot limita equipamentos a uma peça por inimigo", () => {
+  const table = [
+    { definitionId: "espada_curta", chance: 1 },
+    { definitionId: "espada_ferro", chance: 1 },
+    { definitionId: "fragmento_ferro", chance: 1 }
+  ];
+  const drops = rollLoot(table, 10, () => 0);
+  assert.equal(drops.filter(drop => ITEMS[drop.definitionId].type === "equipment").length, 1);
+  assert.equal(drops.some(drop => drop.definitionId === "fragmento_ferro"), true);
 });
 
-test("andar selecionado e maior andar desbloqueado evoluem separadamente", () => {
+test("loot inicial mantém equipamentos raros durante uma sessão curta de farm", () => {
+  const random = createSeededRandom(92741);
+  const equipmentPerSession = [];
+  for (let session = 0; session < 1000; session += 1) {
+    let equipment = 0;
+    for (let kill = 0; kill < 24; kill += 1) {
+      equipment += rollLoot(getCaveTier(1).loot, 1, random)
+        .filter(drop => ITEMS[drop.definitionId].type === "equipment").length;
+    }
+    equipmentPerSession.push(equipment);
+  }
+  equipmentPerSession.sort((left, right) => left - right);
+  assert.ok(equipmentPerSession[499] <= 1, `mediana: ${equipmentPerSession[499]}`);
+  assert.ok(equipmentPerSession[949] <= 3, `p95: ${equipmentPerSession[949]}`);
+});
+
+test("as faixas dos 10 andares selecionam arquétipos e chefe explicitamente", () => {
+  assert.equal(getCaveTier(1).archetype, "common");
+  assert.equal(getCaveTier(3).archetype, "common");
+  assert.equal(getCaveTier(4).archetype, "warrior");
+  assert.equal(getCaveTier(6).archetype, "warrior");
+  assert.equal(getCaveTier(7).archetype, "archer");
+  assert.equal(getCaveTier(8).archetype, "archer");
+  assert.equal(getCaveTier(9).archetype, "elite");
+  assert.equal(getCaveTier(10).archetype, "elite");
+  assert.equal(createEncounterSpec(10).boss, false);
+  assert.equal(createEncounterSpec(10, GAME_CONFIG.firstCave, "boss").boss, true);
+});
+
+test("andar da incursão e maior andar desbloqueado evoluem separadamente", () => {
   const progress = createCaveProgress();
   assert.equal(beginCaveExpedition(progress), 1);
   const target = getFloorUnlockTarget(1);
@@ -312,19 +341,28 @@ test("andar selecionado e maior andar desbloqueado evoluem separadamente", () =>
   assert.equal(unlocked.unlocked, true);
   assert.equal(progress.highestUnlockedFloor, 2);
   assert.equal(progress.selectedFloor, 1);
-  assert.equal(selectCaveFloor(progress, 3).ok, false);
-  assert.equal(selectCaveFloor(progress, 2).ok, true);
-  assert.equal(beginCaveExpedition(progress), 2);
-  advanceCaveFloor(progress, 1);
+  assert.equal(advanceCaveFloor(progress, 1).ok, true);
+  assert.equal(progress.expedition.floor, 2);
   assert.equal(progress.highestUnlockedFloor, 2);
   abandonCaveExpedition(progress);
   assert.equal(progress.selectedFloor, 2);
   assert.equal(progress.highestUnlockedFloor, 2);
 });
 
+test("avanço dentro da caverna só fica disponível após a meta permanente", () => {
+  const progress = createCaveProgress();
+  beginCaveExpedition(progress);
+  assert.equal(getFloorAdvanceState(progress, 1).available, false);
+  for (let kill = 0; kill < getFloorUnlockTarget(1); kill += 1) recordFloorKill(progress, 1);
+  const unlocked = getFloorAdvanceState(progress, 1);
+  assert.deepEqual({ completed: unlocked.completed, available: unlocked.available, nextFloor: unlocked.nextFloor }, { completed: true, available: true, nextFloor: 2 });
+  assert.equal(advanceCaveFloor(progress, 1).ok, true);
+  assert.equal(progress.expedition.floor, 2);
+});
+
 test("a recompensa única do Rei Goblin só é concedida uma vez", () => {
-  const progress = createCaveProgress({ highestUnlockedFloor: 20, currentExpeditionFloor: 20 });
-  const boss = createEncounterSpec(20);
+  const progress = createCaveProgress({ highestUnlockedFloor: 10 });
+  const boss = createEncounterSpec(10, GAME_CONFIG.firstCave, "boss");
   const first = grantEncounterRewards(progress, boss, () => 0);
   const repeat = grantEncounterRewards(progress, boss, () => 0);
   assert.equal(first.firstVictory.items[0].definitionId, "coroa_rei_goblin");
@@ -348,7 +386,7 @@ test("segunda região possui dez estágios, comportamentos e chefe configurados"
   assert.equal(createEncounterSpec(2, grove).visual.species, "wolf");
   assert.equal(getCaveTier(4, grove).ai.pattern, "ash_bolt");
   assert.deepEqual(getCaveTier(8, grove).ai.patterns, ["heavy", "area"]);
-  const boss = createEncounterSpec(10, grove);
+  const boss = createEncounterSpec(10, grove, "boss");
   assert.equal(boss.boss, true);
   assert.equal(boss.name, "Cervo-Rei Putrificado");
   assert.deepEqual(boss.ai.patterns, ["heavy", "charge", "area"]);
@@ -358,13 +396,13 @@ test("progresso e recompensa única permanecem independentes por região", () =>
   const state = createInitialState();
   const cave = state.world.regionProgress.caverna_sombria;
   const grove = state.world.regionProgress.bosque_cinzas;
+  beginCaveExpedition(cave, GAME_CONFIG.firstCave);
+  for (let kill = 0; kill < getFloorUnlockTarget(1); kill += 1) recordFloorKill(cave, 1, GAME_CONFIG.firstCave);
   advanceCaveFloor(cave, 1, GAME_CONFIG.firstCave);
   assert.equal(cave.highestUnlockedFloor, 2);
   assert.equal(grove.highestUnlockedFloor, 1);
 
-  grove.highestUnlockedFloor = 10;
-  grove.selectedFloor = 10;
-  const boss = createEncounterSpec(10, GAME_CONFIG.ashenGrove);
+  const boss = createEncounterSpec(10, GAME_CONFIG.ashenGrove, "boss");
   const first = grantEncounterRewards(grove, boss, () => 0);
   const repeated = grantEncounterRewards(grove, boss, () => 0);
   assert.equal(first.firstVictory.items[0].definitionId, "coroa_cervo");
@@ -376,11 +414,11 @@ test("save preserva região selecionada e progressos regionais sem misturá-los"
   const state = createInitialState();
   state.world.currentRegionId = "bosque_cinzas";
   state.world.regionProgress.caverna_sombria.bossVictories = 1;
-  state.world.regionProgress.caverna_sombria.highestUnlockedFloor = 20;
+  state.world.regionProgress.caverna_sombria.highestUnlockedFloor = 10;
   state.world.regionProgress.bosque_cinzas.highestUnlockedFloor = 4;
   const restored = normalizeGameState(structuredClone(state));
   assert.equal(restored.world.currentRegionId, "bosque_cinzas");
-  assert.equal(restored.world.regionProgress.caverna_sombria.highestUnlockedFloor, 20);
+  assert.equal(restored.world.regionProgress.caverna_sombria.highestUnlockedFloor, 10);
   assert.equal(restored.world.regionProgress.bosque_cinzas.highestUnlockedFloor, 4);
 });
 
@@ -388,17 +426,12 @@ test("progresso da caverna persiste e saves antigos recebem migração segura", 
   const storage = new MemoryStorage();
   const state = createInitialState();
   const cave = state.world.regionProgress.caverna_sombria;
-  cave.highestUnlockedFloor = 7;
-  cave.selectedFloor = 6;
-  cave.floorKills = { 1: 5, 6: 4 };
-  cave.floorObjectivesCompleted = { 1: true };
-  cave.floorCompletions = { 1: 1, 5: 2 };
+  const expedition = startNewCaveExpedition(cave, GAME_CONFIG.firstCave, { id: "persist-expedition" });
+  for (let kill = 0; kill < 3; kill += 1) recordFloorKill(cave, 1, GAME_CONFIG.firstCave, { expeditionId: expedition.id });
   assert.equal(saveGame(state, { storage, logger: quietLogger }), true);
   const restored = loadGame({ storage, logger: quietLogger });
-  assert.equal(restored.world.regionProgress.caverna_sombria.highestUnlockedFloor, 7);
-  assert.equal(restored.world.regionProgress.caverna_sombria.selectedFloor, 6);
-  assert.ok(restored.world.regionProgress.caverna_sombria.floorKills[6] >= getFloorUnlockTarget(6));
-  assert.equal(restored.world.regionProgress.caverna_sombria.floorCompletions[5], 2);
+  assert.equal(restored.world.regionProgress.caverna_sombria.expedition.id, "persist-expedition");
+  assert.equal(restored.world.regionProgress.caverna_sombria.expedition.floorKills[1], 3);
 
   const versionThree = createInitialState();
   versionThree.schemaVersion = 3;
@@ -407,17 +440,20 @@ test("progresso da caverna persiste e saves antigos recebem migração segura", 
   delete versionThree.world.regionProgress;
   const migrated = decodeSave(JSON.stringify({ game: GAME_CONFIG.save.gameId, version: 3, state: versionThree }), SAVE_KEY);
   assert.equal(migrated.world.regionProgress.caverna_sombria.highestUnlockedFloor, 9);
-  assert.equal(migrated.world.regionProgress.caverna_sombria.selectedFloor, 9);
+  assert.equal(migrated.world.regionProgress.caverna_sombria.expedition, null);
   assert.equal(migrated.world.regionProgress.bosque_cinzas.highestUnlockedFloor, 1);
 });
 
-test("save v6 migra para v7 sem perder personagem, equipamento ou andares", () => {
+test("save v6 migra para v9 sem perder personagem, equipamento ou histórico", () => {
   const legacy = createInitialState();
   legacy.schemaVersion = 6;
   legacy.player.level = 7;
   legacy.player.xp = 91;
   legacy.player.coins = 777;
-  legacy.world.bossesDefeated.rei_goblin = 1;
+  legacy.world.bossesDefeated = { rei_goblin: 1 };
+  legacy.world.bossPity = { rei_goblin: 8 };
+  legacy.world.currentArea = "cavernas_sussurro";
+  legacy.systems = { autoFarmSession: { active: true }, trainingSession: { active: true } };
   legacy.world.regionProgress.caverna_sombria = {
     highestUnlockedFloor: 8,
     currentExpeditionFloor: 5,
@@ -429,7 +465,7 @@ test("save v6 migra para v7 sem perder personagem, equipamento ou andares", () =
   const payload = { game: GAME_CONFIG.save.gameId, version: 6, state: legacy };
   const migrated = decodeSave(JSON.stringify(payload), SAVE_KEY);
   const cave = migrated.world.regionProgress.caverna_sombria;
-  assert.equal(migrated.schemaVersion, 7);
+  assert.equal(migrated.schemaVersion, 9);
   assert.equal(migrated.player.level, 7);
   assert.equal(migrated.player.xp, 91);
   assert.equal(migrated.player.coins, 777);
@@ -437,11 +473,12 @@ test("save v6 migra para v7 sem perder personagem, equipamento ou andares", () =
   assert.equal(cave.highestUnlockedFloor, 8);
   assert.equal(cave.selectedFloor, 5);
   assert.equal(cave.bossVictories, 1);
-  assert.equal(cave.floorKills[20], 1);
-  assert.equal(cave.floorObjectivesCompleted[20], true);
-  assert.deepEqual(migrated.world.bossesDefeated, {});
-  assert.equal(cave.floorObjectivesCompleted[7], true);
-  assert.ok(cave.floorKills[7] >= getFloorUnlockTarget(7));
+  assert.equal(cave.expedition, null);
+  assert.equal("bossesDefeated" in migrated.world, false);
+  assert.equal("bossPity" in migrated.world, false);
+  assert.equal("currentArea" in migrated.world, false);
+  assert.equal("systems" in migrated, false);
+  assert.equal(cave.floorCompletions[7], 1);
 });
 
 test("ondas respeitam orçamento, limite ativo, IDs únicos e respawn contínuo", () => {
@@ -458,13 +495,13 @@ test("ondas respeitam orçamento, limite ativo, IDs únicos e respawn contínuo"
   const respawned = updateFarmSpawner(runtime, GAME_CONFIG.firstCave.farm.waveBreak + .1, 0, random);
   assert.ok(respawned);
   assert.ok(runtime.waveIndex >= 2);
-  const plan = createWavePlan(18, GAME_CONFIG.firstCave, random);
-  assert.ok(plan.length >= getFloorFarmConfig(18).waveSize[0]);
-  assert.ok(plan.length <= getFloorFarmConfig(18).waveSize[1]);
+  const plan = createWavePlan(9, GAME_CONFIG.firstCave, random);
+  assert.ok(plan.length >= getFloorFarmConfig(9).waveSize[0]);
+  assert.ok(plan.length <= getFloorFarmConfig(9).waveSize[1]);
 });
 
 test("recompensas e projéteis são independentes por inimigo", () => {
-  const runtime = createFarmRuntime("caverna_sombria", 12, GAME_CONFIG.firstCave, { id: "ownership-test" });
+  const runtime = createFarmRuntime("caverna_sombria", 8, GAME_CONFIG.firstCave, { id: "ownership-test" });
   assert.equal(claimEnemyReward(runtime, "enemy-a"), true);
   assert.equal(claimEnemyReward(runtime, "enemy-a"), false);
   assert.equal(claimEnemyReward(runtime, "enemy-b"), true);
@@ -476,39 +513,57 @@ test("recompensas e projéteis são independentes por inimigo", () => {
   assert.deepEqual(projectiles.map(projectile => projectile.ownerId), ["enemy-b"]);
 });
 
-test("regiões sem farm contínuo encerram a onda sem respawn automático", () => {
+test("as duas regiões jogáveis possuem ondas contínuas independentes", () => {
   const runtime = createFarmRuntime("bosque_cinzas", 1, GAME_CONFIG.ashenGrove, { id: "grove-test" });
   const first = updateFarmSpawner(runtime, 0, 0, () => .5);
   assert.ok(first);
   assert.equal(runtime.waveIndex, 1);
-  assert.equal(updateFarmSpawner(runtime, 30, 0, () => .5), null);
-  assert.equal(runtime.waveIndex, 1);
+  runtime.spawnQueue.length = 0;
+  const respawned = updateFarmSpawner(runtime, 30, 0, () => .5);
+  assert.ok(respawned);
+  assert.equal(runtime.waveIndex, 2);
 });
 
-test("morte e retorno seguro não apagam andar selecionado nem abates", () => {
+test("snapshot preserva incursão ativa e morte grava retorno seguro à vila", () => {
   const state = createInitialState();
   const cave = state.world.regionProgress.caverna_sombria;
-  cave.highestUnlockedFloor = 8;
-  cave.selectedFloor = 6;
-  cave.floorKills[6] = 7;
+  const expedition = startNewCaveExpedition(cave, GAME_CONFIG.firstCave, { id: "death-expedition" });
+  recordFloorKill(cave, 1, GAME_CONFIG.firstCave, { expeditionId: expedition.id });
   state.world.scene = "cave";
-  const snapshot = createSaveSnapshot(state);
-  assert.equal(snapshot.world.scene, "village");
-  assert.equal(snapshot.world.regionProgress.caverna_sombria.selectedFloor, 6);
-  assert.equal(snapshot.world.regionProgress.caverna_sombria.floorKills[6], 9);
+  const activeSnapshot = createSaveSnapshot(state);
+  assert.equal(activeSnapshot.world.scene, "cave");
+  assert.equal(activeSnapshot.world.regionProgress.caverna_sombria.expedition.floorKills[1], 1);
+  state.player.hp = 0;
+  const deathSnapshot = createSaveSnapshot(state);
+  assert.equal(deathSnapshot.world.scene, "village");
+  assert.equal(deathSnapshot.world.regionProgress.caverna_sombria.expedition.id, "death-expedition");
 });
 
 test("boss repetível contabiliza vitórias sem repetir recompensa única", () => {
-  const progress = createCaveProgress({ highestUnlockedFloor: 20, selectedFloor: 20 });
-  const boss = createEncounterSpec(20);
+  const progress = createCaveProgress({ highestUnlockedFloor: 10 });
+  const boss = createEncounterSpec(10, GAME_CONFIG.firstCave, "boss");
+  const prepareBoss = expeditionId => {
+    const expedition = startNewCaveExpedition(progress, GAME_CONFIG.firstCave, { id: expeditionId });
+    expedition.floor = 10;
+    expedition.state = EXPEDITION_STATES.BOSS_PREPARATION;
+    progress.selectedFloor = 10;
+    for (let kill = 0; kill < getFloorUnlockTarget(10); kill += 1) {
+      recordFloorKill(progress, 10, GAME_CONFIG.firstCave, { expeditionId });
+    }
+    assert.equal(markBossSpawned(progress).ok, true);
+    return expedition;
+  };
+  const firstExpedition = prepareBoss("boss-run-1");
   const firstReward = grantEncounterRewards(progress, boss, () => 0);
-  recordFloorKill(progress, 20, GAME_CONFIG.firstCave, { boss: true });
+  recordFloorKill(progress, 10, GAME_CONFIG.firstCave, { boss: true, expeditionId: firstExpedition.id });
+  assert.equal(recordFloorKill(progress, 10, GAME_CONFIG.firstCave, { boss: true, expeditionId: firstExpedition.id }).counted, false);
+  const secondExpedition = prepareBoss("boss-run-2");
   const repeatedReward = grantEncounterRewards(progress, boss, () => 0);
-  recordFloorKill(progress, 20, GAME_CONFIG.firstCave, { boss: true });
+  recordFloorKill(progress, 10, GAME_CONFIG.firstCave, { boss: true, expeditionId: secondExpedition.id });
   assert.ok(firstReward.firstVictory);
   assert.equal(repeatedReward.firstVictory, null);
   assert.equal(progress.bossVictories, 2);
-  assert.equal(progress.floorKills[20], 2);
+  assert.equal(progress.floorObjectivesCompleted[10], true);
 });
 
 test("limite de Bram bloqueia novas compras sem reduzir poder legado", () => {
@@ -522,12 +577,155 @@ test("limite de Bram bloqueia novas compras sem reduzir poder legado", () => {
   assert.equal(GAME_CONFIG.economy.armorUpgrade.maxPurchases, 8);
 });
 
-test("metas da primeira caverna seguem as faixas provisórias autorizadas", () => {
-  for (let floor = 1; floor <= 4; floor += 1) assert.ok(getFloorUnlockTarget(floor) >= 5 && getFloorUnlockTarget(floor) <= 8);
-  for (let floor = 5; floor <= 9; floor += 1) assert.ok(getFloorUnlockTarget(floor) >= 8 && getFloorUnlockTarget(floor) <= 12);
-  for (let floor = 10; floor <= 14; floor += 1) assert.ok(getFloorUnlockTarget(floor) >= 12 && getFloorUnlockTarget(floor) <= 18);
-  for (let floor = 15; floor <= 19; floor += 1) assert.ok(getFloorUnlockTarget(floor) >= 18 && getFloorUnlockTarget(floor) <= 25);
-  assert.equal(getFloorUnlockTarget(20), 1);
+test("metas e ondas dos 10 andares seguem exatamente a tabela de incursão", () => {
+  const kills = [8, 9, 10, 11, 12, 13, 14, 15, 16, 20];
+  const waveSizes = [[2, 3], [2, 3], [3, 4], [3, 4], [3, 4], [4, 5], [4, 5], [4, 5], [5, 6], [5, 6]];
+  assert.deepEqual(Array.from({ length: 10 }, (_, index) => getFloorUnlockTarget(index + 1)), kills);
+  assert.equal(kills.reduce((sum, amount) => sum + amount, 0), 128);
+  assert.deepEqual(Array.from({ length: 10 }, (_, index) => getFloorRule(index + 1).waveSize), waveSizes);
+});
+
+test("multiplicadores de andar são aplicados uma vez sem alterar atributos-base", () => {
+  const commonTier = getCaveTier(1);
+  const eliteTier = getCaveTier(10);
+  const originalCommon = structuredClone(commonTier.stats);
+  const originalElite = structuredClone(eliteTier.stats);
+  const floorOne = createEncounterSpec(1, GAME_CONFIG.firstCave, "common");
+  const floorTen = createEncounterSpec(10, GAME_CONFIG.firstCave, "elite");
+  const repeated = createEncounterSpec(10, GAME_CONFIG.firstCave, "elite");
+  assert.deepEqual({ hp: floorOne.hp, attack: floorOne.attack, defense: floorOne.defense }, { hp: 42, attack: 8, defense: 1 });
+  assert.deepEqual({ hp: floorTen.hp, attack: floorTen.attack, defense: floorTen.defense }, { hp: 292, attack: 32, defense: 4 });
+  assert.deepEqual(repeated, floorTen);
+  assert.deepEqual(commonTier.stats, originalCommon);
+  assert.deepEqual(eliteTier.stats, originalElite);
+});
+
+test("somente mortes da cave, incursão e andar atuais contam para a meta", () => {
+  const progress = createCaveProgress();
+  const expedition = startNewCaveExpedition(progress, GAME_CONFIG.firstCave, { id: "valid-kills" });
+  assert.equal(recordFloorKill(progress, 1, GAME_CONFIG.firstCave, { expeditionId: "stale" }).counted, false);
+  assert.equal(recordFloorKill(progress, 2, GAME_CONFIG.firstCave, { expeditionId: expedition.id }).counted, false);
+  assert.equal(recordFloorKill(progress, 1, GAME_CONFIG.firstCave, { expeditionId: expedition.id, regionId: "bosque_cinzas" }).counted, false);
+  assert.equal(recordFloorKill(progress, 1, GAME_CONFIG.firstCave, { expeditionId: expedition.id, regionId: "caverna_sombria" }).counted, true);
+  assert.equal(expedition.floorKills[1], 1);
+});
+
+test("permanecer mantém a conclusão, reativa o farm e preserva o avanço", () => {
+  const progress = createCaveProgress();
+  const expedition = startNewCaveExpedition(progress, GAME_CONFIG.firstCave, { id: "stay-run" });
+  for (let kill = 0; kill < getFloorUnlockTarget(1); kill += 1) {
+    recordFloorKill(progress, 1, GAME_CONFIG.firstCave, { expeditionId: expedition.id });
+  }
+  assert.equal(expedition.state, EXPEDITION_STATES.FLOOR_COMPLETED);
+  assert.equal(canSpawnCommonEnemies(progress), false);
+  assert.equal(stayOnCompletedFloor(progress).ok, true);
+  assert.equal(expedition.state, EXPEDITION_STATES.FARMING);
+  assert.equal(canSpawnCommonEnemies(progress), true);
+  assert.equal(recordFloorKill(progress, 1, GAME_CONFIG.firstCave, { expeditionId: expedition.id }).farmOnly, true);
+  assert.equal(expedition.floorKills[1], 8);
+  assert.equal(expedition.farmKills[1], 1);
+  assert.equal(getFloorAdvanceState(progress, 1).available, true);
+});
+
+test("andar 10 exige 20 mortes, espera ameaças restantes e invoca um único boss", () => {
+  const progress = createCaveProgress({ highestUnlockedFloor: 10 });
+  const expedition = startNewCaveExpedition(progress, GAME_CONFIG.firstCave, { id: "boss-gate" });
+  expedition.floor = 10;
+  expedition.state = EXPEDITION_STATES.BOSS_PREPARATION;
+  progress.selectedFloor = 10;
+  assert.equal(markBossSpawned(progress).ok, false);
+  for (let kill = 0; kill < 19; kill += 1) {
+    recordFloorKill(progress, 10, GAME_CONFIG.firstCave, { expeditionId: expedition.id });
+  }
+  assert.equal(expedition.state, EXPEDITION_STATES.BOSS_PREPARATION);
+  const twentieth = recordFloorKill(progress, 10, GAME_CONFIG.firstCave, { expeditionId: expedition.id });
+  assert.equal(twentieth.bossUnlocked, true);
+  assert.equal(expedition.state, EXPEDITION_STATES.BOSS_PENDING);
+  assert.equal(canSpawnCommonEnemies(progress), false);
+  assert.equal(markBossSpawned(progress, GAME_CONFIG.firstCave, { activeCommonCount: 2 }).ok, false);
+  assert.equal(markBossSpawned(progress, GAME_CONFIG.firstCave, { activeCommonCount: 0 }).ok, true);
+  assert.equal(markBossSpawned(progress).ok, false);
+  assert.equal(expedition.state, EXPEDITION_STATES.BOSS_ACTIVE);
+});
+
+test("derrota do boss encerra spawns, impede andar 11 e exige nova incursão", () => {
+  const progress = createCaveProgress({ highestUnlockedFloor: 10 });
+  const expedition = startNewCaveExpedition(progress, GAME_CONFIG.firstCave, { id: "complete-run" });
+  expedition.floor = 10;
+  expedition.state = EXPEDITION_STATES.BOSS_PENDING;
+  expedition.bossUnlocked = true;
+  progress.selectedFloor = 10;
+  assert.equal(markBossSpawned(progress).ok, true);
+  const defeated = recordFloorKill(progress, 10, GAME_CONFIG.firstCave, { boss: true, expeditionId: expedition.id });
+  assert.equal(defeated.caveCompleted, true);
+  assert.equal(expedition.state, EXPEDITION_STATES.CAVE_COMPLETED);
+  assert.equal(canSpawnCommonEnemies(progress), false);
+  assert.equal(advanceCaveFloor(progress, 10).ok, false);
+  assert.equal(markBossSpawned(progress).ok, false);
+  assert.equal(finishCaveExit(progress), true);
+  assert.equal(progress.expedition, null);
+  const next = startNewCaveExpedition(progress, GAME_CONFIG.firstCave, { id: "next-run" });
+  assert.equal(next.floor, 1);
+  assert.deepEqual(next.floorKills, {});
+  assert.equal(next.bossUnlocked, false);
+});
+
+test("estados da incursão persistem e boss ativo é rearmado com segurança", () => {
+  const base = createCaveProgress();
+  const expedition = startNewCaveExpedition(base, GAME_CONFIG.firstCave, { id: "restore-run" });
+  for (let kill = 0; kill < getFloorUnlockTarget(1); kill += 1) recordFloorKill(base, 1, GAME_CONFIG.firstCave, { expeditionId: expedition.id });
+  const floorCompleted = createRegionProgress(structuredClone(base), GAME_CONFIG.firstCave);
+  assert.equal(floorCompleted.expedition.state, EXPEDITION_STATES.FLOOR_COMPLETED);
+  assert.equal(floorCompleted.expedition.floorKills[1], 8);
+
+  expedition.floor = 10;
+  expedition.state = EXPEDITION_STATES.BOSS_ACTIVE;
+  expedition.bossUnlocked = true;
+  expedition.bossSpawned = true;
+  const activeBoss = createRegionProgress(structuredClone(base), GAME_CONFIG.firstCave);
+  prepareExpeditionAfterLoad(activeBoss);
+  assert.equal(activeBoss.expedition.state, EXPEDITION_STATES.BOSS_PENDING);
+  assert.equal(activeBoss.expedition.bossSpawned, false);
+  assert.equal(markBossSpawned(activeBoss).ok, true);
+
+  // Sair, morrer ou recarregar descarrega entidades. A reentrada rearma a
+  // mesma incursão sem conservar uma instância fantasma do chefe.
+  prepareExpeditionAfterLoad(activeBoss);
+  assert.equal(activeBoss.expedition.state, EXPEDITION_STATES.BOSS_PENDING);
+  assert.equal(activeBoss.expedition.bossSpawned, false);
+
+  activeBoss.expedition.bossDefeated = true;
+  activeBoss.expedition.completed = true;
+  const completed = createRegionProgress(structuredClone(activeBoss), GAME_CONFIG.firstCave);
+  assert.equal(completed.expedition.state, EXPEDITION_STATES.CAVE_COMPLETED);
+  assert.equal(canSpawnCommonEnemies(completed), false);
+});
+
+test("configuração e loot de chefes permanecem independentes e imutáveis", () => {
+  const goblinBoss = createEncounterSpec(10, GAME_CONFIG.firstCave, "boss");
+  const stagBoss = createEncounterSpec(10, GAME_CONFIG.ashenGrove, "boss");
+  assert.deepEqual(goblinBoss.loot, [
+    { definitionId: "pocao_maior", chance: .35 },
+    { definitionId: "anel_vitalidade", chance: .06 },
+    { definitionId: "amuleto_vigia", chance: .07 },
+    { definitionId: "fragmento_aco", chance: .65 },
+    { definitionId: "essencia", chance: 1 },
+    { definitionId: "cristal_raro", chance: .16 }
+  ]);
+  assert.deepEqual(stagBoss.loot, [
+    { definitionId: "seiva_corrompida", chance: 1 },
+    { definitionId: "cinza_viva", chance: 1 },
+    { definitionId: "espada_cinzas", chance: .22 },
+    { definitionId: "cristal_raro", chance: .2 }
+  ]);
+  assert.deepEqual(goblinBoss.rewards, { xpBase: 240, xpPerFloor: 0, coinsBase: 45, coinsPerFloor: 0, coinVariance: 12, multiplier: 1.35 });
+  assert.deepEqual(goblinBoss.firstVictory, { xp: 220, coins: 80, items: [{ definitionId: "coroa_rei_goblin", quantity: 1 }] });
+  assert.deepEqual(stagBoss.rewards, { xpBase: 360, xpPerFloor: 0, coinsBase: 125, coinsPerFloor: 0, coinVariance: 30, multiplier: 1.7 });
+  assert.deepEqual(stagBoss.firstVictory, { xp: 300, coins: 190, items: [{ definitionId: "coroa_cervo", quantity: 1 }] });
+  assert.notEqual(goblinBoss.loot, stagBoss.loot);
+  const firstCommon = createEncounterSpec(10, GAME_CONFIG.firstCave, "common");
+  assert.ok(goblinBoss.hp >= firstCommon.hp * 5 && goblinBoss.hp <= firstCommon.hp * 8);
+  assert.ok(goblinBoss.attack >= firstCommon.attack * 1.4 && goblinBoss.attack <= firstCommon.attack * 1.8);
 });
 
 function fundForge(player) {
@@ -602,6 +800,58 @@ test("venda credita uma vez e recusa equipamento atualmente equipado", () => {
   assert.equal(sellEquipment(state.player, spare.uid, { transactionId: "sell-spare" }).code, "duplicate_transaction");
 });
 
+test("reciclagem de raridade alta devolve minério sem duplicar a transação", () => {
+  const state = createInitialState();
+  state.player.level = 10;
+  assert.equal(addInventoryItem(state.player, "espada_cinzas"), true);
+  const item = state.player.inventory.find(entry => entry.definitionId === "espada_cinzas");
+  const expected = getSaleReturn(item);
+  assert.ok(Object.keys(expected.materials).length > 0);
+  const beforeCoins = state.player.coins;
+  const result = sellEquipment(state.player, item.uid, { transactionId: "salvage-rare" });
+  assert.equal(result.ok, true);
+  assert.equal(state.player.coins, beforeCoins + expected.gold);
+  for (const [definitionId, quantity] of Object.entries(expected.materials)) {
+    assert.equal(inventoryCount(state.player, definitionId), quantity);
+  }
+  assert.equal(sellEquipment(state.player, item.uid, { transactionId: "salvage-rare" }).code, "duplicate_transaction");
+});
+
+test("reciclagem não remove item lendário quando faltam slots para os materiais", () => {
+  const state = createInitialState();
+  assert.equal(addInventoryItem(state.player, "coroa_rei_goblin"), true);
+  const item = state.player.inventory.find(entry => entry.definitionId === "coroa_rei_goblin");
+  state.player.bag.capacity = state.player.inventory.length;
+  const coinsBefore = state.player.coins;
+  const result = sellEquipment(state.player, item.uid, { transactionId: "salvage-full" });
+  assert.equal(result.code, "inventory_full");
+  assert.equal(state.player.coins, coinsBefore);
+  assert.ok(state.player.inventory.some(entry => entry.uid === item.uid));
+  assert.equal(inventoryCount(state.player, "fragmento_aco"), 0);
+  assert.equal(inventoryCount(state.player, "cristal_raro"), 0);
+});
+
+test("arqueiro e arremessador usam projéteis distintos e velocidade de reação justa", () => {
+  const archer = createEncounterSpec(12, GAME_CONFIG.firstCave, "ranged");
+  const thrower = createEncounterSpec(12, GAME_CONFIG.firstCave, "thrower");
+  assert.equal(archer.archetype, "archer");
+  assert.equal(archer.ai.pattern, "arrow");
+  assert.equal(archer.ai.projectileSpeed, 315);
+  assert.equal(thrower.archetype, "thrower");
+  assert.equal(thrower.ai.pattern, "rock");
+  assert.equal(thrower.ai.projectileSpeed, 285);
+  assert.ok(thrower.ai.telegraph >= .6);
+});
+
+test("ondas respeitam o limite configurado de atacantes à distância", () => {
+  const random = () => .99;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const plan = createWavePlan(12, GAME_CONFIG.firstCave, random);
+    const ranged = plan.filter(roleId => ["archer", "thrower"].includes(GAME_CONFIG.firstCave.farm.roles[roleId]?.archetype));
+    assert.ok(ranged.length <= getFloorFarmConfig(12).maxRanged);
+  }
+});
+
 test("compras e reforços repetidos com a mesma transação não duplicam pagamentos", () => {
   const state = createInitialState();
   fundForge(state.player);
@@ -642,11 +892,14 @@ test("habilidades respeitam nível, pré-requisitos, pontos e melhorias", () => 
   const { player } = createInitialState();
   assert.equal(getSkillLevel(player, "golpe_poderoso"), 0);
   assert.equal(canUpgradeSkill(player, "corte_giratorio").code, "player_level");
+  assert.equal(canUpgradeSkill(player, "golpe_poderoso").code, "player_level");
+  player.level = 3;
+  player.weaponMastery.sword.level = 2;
+  player.skillProgression.points = 5;
   assert.equal(upgradeSkill(player, "golpe_poderoso").ok, true);
-  assert.equal(player.skillProgression.points, 0);
+  assert.equal(player.skillProgression.points, 4);
   assert.equal(getSkillLevel(player, "golpe_poderoso"), 1);
-  player.level = 2;
-  player.skillProgression.points = 2;
+  player.level = 5;
   assert.equal(upgradeSkill(player, "corte_giratorio").ok, true);
   assert.equal(getSkillLevel(player, "corte_giratorio"), 1);
   assert.equal(canUpgradeSkill(player, "investida").code, "player_level");
@@ -654,6 +907,9 @@ test("habilidades respeitam nível, pré-requisitos, pontos e melhorias", () => 
 
 test("ativação consome vigor uma vez, aplica cooldown e só cancela antecipação", () => {
   const { player } = createInitialState();
+  player.level = 3;
+  player.weaponMastery.sword.level = 2;
+  player.skillProgression.points = 1;
   upgradeSkill(player, "golpe_poderoso");
   const runtime = createSkillRuntime();
   const before = player.resources.stamina;
@@ -706,6 +962,9 @@ test("maestria exige dano real, rejeita evento duplicado e limita ganho por alvo
 test("habilidades, vigor e maestria persistem no save", () => {
   const storage = new MemoryStorage();
   const state = createInitialState();
+  state.player.level = 3;
+  state.player.weaponMastery.sword.level = 2;
+  state.player.skillProgression.points = 1;
   upgradeSkill(state.player, "golpe_poderoso");
   state.player.resources.stamina = 43;
   state.player.weaponMastery.sword.exp = 17;
@@ -745,7 +1004,7 @@ test("simulação de progressão é determinística para a mesma semente", () =>
 
 test("coorte padrão respeita a cadência hipotética dos marcos principais", () => {
   const result = simulateCohort({ seed: 41021, runs: 80, profile: "standard" });
-  assert.equal(result.completionRate, 1);
+  assert.ok(result.completionRate >= .25 && result.completionRate <= .9, `conclusão: ${result.completionRate}`);
   assert.ok(result.medianFightsToFirstLevel >= 15 && result.medianFightsToFirstLevel <= 30);
   assert.ok(result.meanImprovements > result.meanForgeEnhancements);
   for (const [milestone, [minimum, maximum]] of Object.entries(PROGRESSION_HYPOTHESES)) {
@@ -753,7 +1012,7 @@ test("coorte padrão respeita a cadência hipotética dos marcos principais", ()
     assert.ok(median >= minimum && median <= maximum, `${milestone}: ${median}s fora de ${minimum}-${maximum}s`);
   }
   assert.ok(result.meanKillSeconds < 16);
-  assert.ok(result.boss.meanDangerRatio > .2 && result.boss.meanDangerRatio < .65);
+  assert.ok(result.boss.meanDangerRatio > .5 && result.boss.meanDangerRatio < .9);
 });
 
 test("economia inicial exige jogo ativo e custos da forja crescem sem recuar", () => {
@@ -769,4 +1028,6 @@ test("economia inicial exige jogo ativo e custos da forja crescem sem recuar", (
   for (let level = 2; level <= 10; level += 1) {
     assert.ok(playerExpRequired(level) / playerExpRequired(level - 1) <= 1.45);
   }
+  const cohort = simulateCohort({ seed: 41021, runs: 80, profile: "standard" });
+  assert.ok(cohort.meanGoldPerMinute < 40, `ouro/min: ${cohort.meanGoldPerMinute}`);
 });

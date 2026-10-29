@@ -44,11 +44,20 @@
               <span class="eyebrow">OBJETIVO ATUAL</span>
               <strong id="objective-title">Entre na Caverna Sombria</strong>
               <small id="objective-detail">Siga a trilha ao nordeste da vila</small>
+              <div class="objective-progress" id="objective-progress" hidden>
+                <span id="objective-floor">ANDAR 1 / 10</span>
+                <b id="objective-kills">0 / 8</b>
+              </div>
+              <div class="objective-actions" id="objective-actions" hidden>
+                <button class="floor-advance-button" id="floor-advance-button" type="button" hidden>Avançar</button>
+                <button class="floor-stay-button" id="floor-stay-button" type="button" hidden>Permanecer</button>
+                <button class="floor-exit-button" id="floor-exit-button" type="button" hidden>Sair da cave</button>
+              </div>
             </section>
           </div>
 
           <div class="location-badge" id="location-badge"><span>♦</span> Clareira do Corvo</div>
-          <div class="cave-floor-badge" id="cave-floor-badge" hidden>ANDAR <strong id="cave-floor-value">1 / 20</strong></div>
+          <div class="cave-floor-badge" id="cave-floor-badge" hidden>ANDAR <strong id="cave-floor-value">1 / 10</strong></div>
           <div class="toast" id="toast" role="status"></div>
           <div class="interaction-prompt" id="interaction-prompt" hidden>
             <kbd>E</kbd><span id="interaction-text">Interagir</span>
@@ -131,7 +140,7 @@
         <section class="side-section journey-section">
           <div class="section-heading"><span>JORNADA</span><i></i></div>
           <div class="journey-row active"><span>01</span><div><strong>A Clareira</strong><small>Refúgio e mercador</small></div><b>✓</b></div>
-          <div class="journey-row"><span>02</span><div><strong id="journey-region-name">Caverna Sombria</strong><small id="cave-progress">Estágio 1 de 20</small></div><b>♦</b></div>
+          <div class="journey-row"><span>02</span><div><strong id="journey-region-name">Caverna Sombria</strong><small id="cave-progress">Melhor andar: 1 de 10</small></div><b>♦</b></div>
           <div class="journey-row locked" id="grove-journey-row"><span>03</span><div><strong>Bosque das Cinzas</strong><small id="grove-journey-status">Derrote o Rei Goblin</small></div><b>◆</b></div>
           <button class="open-regions-button" id="region-button" type="button">Mapa de regiões <b>R</b></button>
         </section>
@@ -167,24 +176,34 @@
       </header>
       <div class="shop-grid">
         <article class="shop-item">
-          <span class="shop-icon sword-icon">⚔</span><div><small>MELHORIA</small><h3>Afiar espada</h3><p>+3 de dano permanente.</p></div>
+          <span class="shop-icon sword-icon">⚔</span><div><small>MELHORIA</small><h3>Afiar espada</h3><p>+1 de dano permanente.</p></div>
           <button data-buy="damage" type="button"><span id="damage-price">30</span> ●</button>
         </article>
         <article class="shop-item">
-          <span class="shop-icon armor-icon">⬟</span><div><small>MELHORIA</small><h3>Reforçar armadura</h3><p>+2 de defesa permanente.</p></div>
+          <span class="shop-icon armor-icon">⬟</span><div><small>MELHORIA</small><h3>Reforçar armadura</h3><p>+1 de defesa permanente.</p></div>
           <button data-buy="armor" type="button"><span id="armor-price">35</span> ●</button>
         </article>
         <article class="shop-item">
           <span class="shop-icon potion-icon">◆</span><div><small>CONSUMÍVEL</small><h3>Poção de cura</h3><p>Recupera 45 de vida.</p></div>
-          <button data-buy="potion" type="button">15 ●</button>
+          <button data-buy="potion" type="button"><span id="potion-price">25</span> ●</button>
         </article>
         <article class="shop-item">
           <span class="shop-icon heal-icon">✦</span><div><small>SERVIÇO</small><h3>Descansar</h3><p>Recupere toda a vida.</p></div>
-          <button data-buy="heal" type="button">8 ●</button>
+          <button data-buy="heal" type="button"><span id="rest-price">12</span> ●</button>
         </article>
       </div>
       <div class="merchant-catalog-heading"><span class="eyebrow">EQUIPAMENTOS DE BRAM</span><small>Compras usam a mesma mochila e moedas da jornada.</small></div>
       <div class="merchant-equipment-grid" id="merchant-equipment-grid"></div>
+      <section class="merchant-sale-panel" aria-labelledby="merchant-sale-title">
+        <div class="merchant-catalog-heading"><span class="eyebrow" id="merchant-sale-title">VENDER E RECICLAR</span><small>Peças melhores retornam minérios de forja.</small></div>
+        <div class="merchant-sale-layout">
+          <div class="merchant-sale-grid" id="merchant-sale-grid" role="listbox" aria-label="Equipamentos disponíveis para venda"></div>
+          <div class="merchant-sale-confirm">
+            <p id="merchant-sale-preview">Selecione um equipamento da mochila.</p>
+            <button class="secondary-button" id="merchant-sell-button" type="button" disabled>Confirmar venda</button>
+          </div>
+        </div>
+      </section>
       <button class="forge-link-button" id="merchant-forge-button" type="button"><span>◆</span> Abrir estação de forja</button>
       <footer>Pressione <kbd>ESC</kbd> para voltar ao jogo</footer>
     </form>
@@ -219,20 +238,6 @@
         </section>
       </div>
       <footer>Reforços têm 100% de sucesso e não reduzem o nível do item.</footer>
-    </div>
-  </dialog>
-
-  <dialog class="game-dialog encounter-dialog" id="encounter-dialog">
-    <div class="dialog-frame compact-dialog encounter-frame">
-      <span class="encounter-mark" aria-hidden="true">◆</span>
-      <span class="eyebrow" id="encounter-kicker">ANDAR CONCLUÍDO</span>
-      <h2 id="encounter-title">Vitória na caverna</h2>
-      <p id="encounter-summary">O caminho adiante está aberto.</p>
-      <div class="encounter-rewards" id="encounter-rewards"></div>
-      <div class="encounter-actions">
-        <button class="primary-button" id="advance-floor-button" type="button">Avançar</button>
-        <button class="secondary-button" id="leave-cave-button" type="button">Retornar à vila</button>
-      </div>
     </div>
   </dialog>
 

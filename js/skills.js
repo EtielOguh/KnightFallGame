@@ -62,6 +62,12 @@ export function canUpgradeSkill(player, id) {
   const level = getSkillLevel(player, id);
   if (level >= definition.maxLevel) return blocked("max_level", "Nível máximo alcançado.");
   if (player.level < definition.requiredPlayerLevel) return blocked("player_level", `Requer nível ${definition.requiredPlayerLevel}.`);
+  if (definition.requiredMastery) {
+    const mastery = player.weaponMastery?.[definition.requiredMastery.type];
+    if (!mastery || mastery.level < definition.requiredMastery.level) {
+      return blocked("mastery", `Requer maestria de espada nível ${definition.requiredMastery.level}.`);
+    }
+  }
   if (definition.prerequisite && getSkillLevel(player, definition.prerequisite.id) < definition.prerequisite.level) {
     return blocked("prerequisite", `Requer ${SKILLS[definition.prerequisite.id].name} nível ${definition.prerequisite.level}.`);
   }
@@ -88,7 +94,7 @@ export function tickSkillRuntime(player, runtime, dt) {
   resources.stamina = Math.min(resources.maxStamina, resources.stamina + GAME_CONFIG.skills.staminaRegenPerSecond * dt);
 }
 
-export function canUseSkill(player, id, runtime) {
+function canUseSkill(player, id, runtime) {
   const definition = SKILLS[id];
   if (!definition || definition.kind !== "active") return blocked("unknown_skill", "Habilidade ativa desconhecida.");
   const level = getSkillLevel(player, id);
@@ -157,7 +163,7 @@ export function outgoingDamageMultiplier(player) {
   return multiplier;
 }
 
-export function equippedWeaponType(player) {
+function equippedWeaponType(player) {
   const uid = player.equipment?.weapon;
   const entry = player.inventory?.find(item => item.uid === uid);
   return ITEMS[entry?.definitionId]?.visual?.kind || ITEMS[entry?.definitionId]?.weaponType || "unarmed";

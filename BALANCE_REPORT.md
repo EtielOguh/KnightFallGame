@@ -1,69 +1,78 @@
-# KnightFall — relatório do primeiro pacote de farm
+# KnightFall — relatório da incursão de 10 andares
 
-Data da rodada: 27 de outubro de 2026.
+Data da rodada: 29 de outubro de 2026.
 
 ## Metodologia
 
-`js/simulation.js` usa semente controlada e as tabelas reais de HP, dano, XP, loot, inventário, equipamento e forja. O modelo agora percorre as metas de abate, gera composições pelo orçamento de ameaça e contabiliza ondas, retornos táticos, mortes e progressão. Ele aproxima decisões de um jogador; não é telemetria e médias não garantem uma recompensa individual.
+`js/simulation.js` usa semente controlada e as tabelas reais de HP, ataque, defesa, XP, loot, inventário, loja e forja. Cada execução percorre os 128 abates comuns e tenta o Rei Goblin. O modelo aproxima precisão, cadência, esquiva, pressão de onda, retornos táticos e decisões de melhoria para três perfis.
 
-Comando reproduzível:
+Os resultados são hipóteses reproduzíveis, não telemetria. Médias não garantem drops, vitória ou tempo individual.
 
 ```sh
 npm run simulate:balance -- --seed 41021 --runs 250
 ```
 
-Os valores “antes” foram registrados no baseline imediatamente anterior ao pacote. O modelo anterior simulava apenas um encontro por andar; por isso volume total, ouro total e duração não são comparações equivalentes. TTK, risco, nível final e marcos ainda são úteis como referência.
+## Resultado atual — 250 execuções por perfil
 
-## Indicadores do perfil padrão
+| Indicador | Padrão | Habilidoso | Cauteloso/subequipado |
+| --- | ---: | ---: | ---: |
+| Conclusão da incursão | 61,2% | 100% | 0,8% |
+| Nível final médio | 6,61 | 7,00 | 6,01 |
+| Tempo médio por inimigo | 10,65 s | 8,33 s | 13,01 s |
+| Mortes médias | 7,18 | 0,22 | 18,58 |
+| Ouro ganho / gasto | 815 / 734 | 862 / 481 | 721 / 706 |
+| Ouro por minuto | 19,81 | 36,74 | 12,17 |
+| Equipamentos encontrados | 8,20 | 8,73 | 7,83 |
+| Materiais encontrados | 63,58 | 64,12 | 61,93 |
+| Rei Goblin — TTK médio das vitórias | 52,48 s | 40,79 s | 65,05 s |
+| Rei Goblin — dano/vida máxima | 76,8% | 42,7% | 95,3% |
 
-| Indicador | Baseline de 20 encontros | Farm v7, 250 execuções |
+O perfil padrão conclui com frequência suficiente para validar o fluxo, mas não transforma o chefe em vitória automática. O perfil habilidoso demonstra o valor de esquiva e precisão. O perfil cauteloso atual funciona como cenário deliberadamente subequipado; sua taxa muito baixa é um risco a observar em playtest humano, sobretudo para futuras classes que ainda não existem na execução atual.
+
+## Marcos do perfil padrão
+
+| Marco | Mediana | Hipótese atual |
 | --- | ---: | ---: |
-| Conclusão da Cave 1 | 100% | 100% |
-| Abates/vitórias médios | 20 | 259 obrigatórios; 261,52 tentativas |
-| Nível médio ao concluir | 9,00 | 9,84 |
-| Tempo médio por inimigo | 13,88 s | 9,57 s |
-| Mortes médias | 1,67 | 2,52 |
-| Ouro ganho / gasto | 1.775 / 714 | 5.300 / 2.305 |
-| Ouro médio por minuto | não medido | 75,44 |
-| Primeira recompensa | 0:08 | 0:07 |
-| Primeiro nível/melhoria | 3:58 | 4:43 |
-| Primeira troca de equipamento | 7:10 | 7:01 |
-| Primeiro reforço | 14:48 | 16:53 |
-| Primeira ameaça elite | 23:23 | 39:00 |
-| Rei Goblin: TTK / risco de vida | 25,39 s / 39,9% | 23,25 s / 32,9% |
+| Primeira recompensa | 0:07 | 0–3 min |
+| Primeiro nível/melhoria | 4:03 | 3–7 min |
+| Primeira troca de arma | 9:23 | 7–12 min |
+| Primeiro reforço | 23:31 | 20–30 min |
+| Primeira elite | 24:29 | 20–30 min |
 
-A chegada à faixa elite foi conscientemente recalibrada para uma hipótese de 35–50 minutos. A meta antiga de 20–30 minutos era compatível com um inimigo por andar, mas não com 122–151 abates até a faixa avançada. Em 250 execuções, 99,6% do perfil padrão ficaram nessa nova janela. A hipótese deve ser validada com jogadores reais antes de reduzir metas.
+A nova rota tem exatamente 128 eliminações comuns. O primeiro reforço foi movido para a hipótese de 20–30 minutos porque a economia vigente exige uma troca relevante antes de investir materiais; isso deve continuar sendo validado em jogo real.
 
-## Parâmetros implantados
+## Parâmetros da cave
 
-- Andares 1–4: 5, 6, 7 e 8 abates.
-- Andares 5–9: 8, 9, 10, 11 e 12 abates.
-- Andares 10–14: 12, 14, 15, 16 e 18 abates.
-- Andares 15–19: 18, 20, 21, 23 e 25 abates.
-- Andar 20: uma vitória para o objetivo; chefe e recompensa repetível continuam disponíveis.
-- Ondas: 2–4 posições planejadas, teto ativo de 2/3/3/4 e orçamento de ameaça por faixa.
-- Navegação: no máximo dois novos cálculos A* por quadro e replanejamento entre 0,42–0,68 s.
-- Projéteis: teto de 24 na Cave 1 e `ownerId` obrigatório.
-- Treino de Bram: oito compras futuras de ataque e oito de defesa. Saves acima disso não perdem atributos.
+- Metas: `8, 9, 10, 11, 12, 13, 14, 15, 16, 20`.
+- Ondas: 2–3 nos andares 1–2; 3–4 nos 3–5; 4–5 nos 6–8; 5–6 nos 9–10.
+- Limite simultâneo: 3, 3, 4, 4, 4, 5, 5, 5, 6 e 6.
+- Multiplicadores finais do andar 10: vida 2,65×, ataque 2,00× e defesa 1,35×.
+- Rei Goblin: 1.200 HP, 40 de ataque e 5 de defesa. Contra o inimigo-base comum do andar 10, isso representa aproximadamente 5,2× vida, 1,43× ataque e 1,25× defesa.
 
-O XP comum foi reduzido porque agora há muitos inimigos por andar. Guerreiro, arqueiro e elite continuam aumentando a eficiência de XP/min, enquanto o chefe mantém XP relevante e prêmio único separado. A curva global de nível não foi alterada.
+O chefe manteve seus padrões, segunda fase e tabelas de recompensa. Somente seus atributos foram alinhados à referência de poder da nova progressão; com 2.800 HP/65 ataque, a simulação anterior desta rodada produziu 0% de conclusão padrão. A primeira correção para 1.850/42 ainda produziu apenas 7,5%. O valor atual chegou a 61,2% sem alterar loot.
 
-## Economia e drops
+## Auditoria de loot dos chefes
 
-O loot continua individual e usa as tabelas já existentes: minério e consumível no início, aço/essência e equipamento nas faixas seguintes, cristal raro nas elites/chefe. A coorte padrão encontrou em média 14,63 equipamentos e 97,43 materiais ao concluir os objetivos; esses números são altos o bastante para exigir observação de inventário cheio e consumo na forja no próximo ciclo.
+As probabilidades ativas foram preservadas e agora possuem teste de regressão exato.
 
-Não foram implementados sets completos, fragmentos garantidos, desmontagem, crafting ou falha de forja. A estrutura de recompensa permanece extensível, mas nenhuma probabilidade futura foi inventada sem simulação.
+Rei Goblin:
 
-## Desempenho observado
+- Poção maior: 35%; Anel de Vitalidade: 6%; Amuleto do Vigia: 7%.
+- Fragmento de Aço: 65%; Essência Goblin: 100%; Cristal Raro: 16%.
+- Primeira vitória: Coroa do Rei Goblin, 220 XP e 80 moedas, uma única vez.
 
-Smoke test no navegador, com horda e Canvas ativos, mediu 181 quadros em 3,007 s: 60,2 FPS estimados, quadro médio de 16,61 ms e p95 de 17,60 ms. É uma medição local curta, não um benchmark universal. Entidades mortas, partículas e projéteis continuam sendo removidos; resultados recentes ficam limitados a 30 e a proteção de IDs de recompensa a 512 por sessão.
+Cervo-Rei Putrificado:
 
-## Riscos e próximos sinais
+- Seiva Corrompida: 100%; Cinza Viva: 100%; Lâmina das Cinzas: 22%; Cristal Raro: 20%.
+- Primeira vitória: Coroa do Cervo, 300 XP e 190 moedas, uma única vez.
 
-- O modelo não representa domínio de esquiva, uso perfeito de habilidades nem tempo ocioso real.
-- A chance atual de loot aplicada a 259 abates pode encher a mochila; medir itens perdidos e frequência de retorno.
-- O lucro de 75,44 ouro/min precisa ser comparado ao consumo real de poções, forja e futuras refinarias.
-- A primeira faixa elite em aproximadamente 39 minutos pode ser longa para jogadores novos, embora esteja coerente com o objetivo de farm prolongado.
-- O Bosque das Cinzas mantém seu fluxo anterior de encontro único; o farm contínuo foi explicitamente limitado à Cave 1 neste pacote.
+`rollLoot` permite várias rolagens independentes de consumíveis/materiais, mas no máximo um equipamento por inimigo. A camada Canvas ativa contém somente o guerreiro e as peças acima nessas tabelas. O catálogo legado possui definições adicionais de sets/classes, porém elas não foram conectadas porque isso modificaria o loot que esta rodada exige preservar integralmente.
 
-Próximo ciclo recomendado: telemetria local opcional de duração ativa, dano por arquétipo, abandono por andar, poções, loot perdido e tempo de retorno. Só depois disso devem ser definidos sets do Rei Goblin, fragmentos contra azar e reciclagem de duplicatas.
+## Validação
+
+- 57 testes automatizados aprovados.
+- Coortes determinísticas de 250 execuções para três perfis.
+- Smoke test no Chromium: novo jogo, incursão, conclusão do andar, permanecer, avanço, 20/20, Boss pendente/ativo, morte e reentrada, vitória, saída e nova incursão.
+- Console do navegador sem erros ou avisos.
+
+Riscos: a simulação não representa comportamento humano real; o perfil cauteloso está excessivamente punitivo; e Archer, Thief e Mage ainda não existem no runtime, portanto balanceamento multiclasse não pode ser validado sem inventar sistemas fora do escopo. O próximo ciclo deve coletar telemetria local de tempo ativo, dano recebido, mortes por andar e tentativas de chefe antes de novo ajuste numérico.

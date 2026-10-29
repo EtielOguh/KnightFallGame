@@ -8,6 +8,7 @@ export function createFarmRuntime(regionId, floor, config, options = {}) {
     id: options.id || `farm_${regionId}_${floor}_${runtimeSequence}`,
     regionId,
     floor,
+    expeditionId: options.expeditionId || null,
     waveIndex: 0,
     entitySequence: 0,
     spawnQueue: [],
@@ -19,7 +20,7 @@ export function createFarmRuntime(regionId, floor, config, options = {}) {
   };
 }
 
-export function queueNextWave(runtime, random = Math.random) {
+function queueNextWave(runtime, random = Math.random) {
   runtime.waveIndex += 1;
   runtime.spawnQueue = createWavePlan(runtime.floor, runtime.config, random);
   runtime.breakTimer = 0;
