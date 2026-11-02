@@ -4,13 +4,15 @@ import { createSaveSnapshot, normalizeGameState, STATE_SCHEMA_VERSION, validateG
 export const SAVE_KEY = GAME_CONFIG.save.primaryKey;
 const SAVE_VERSION = STATE_SCHEMA_VERSION;
 const LEGACY_SAVE_KEYS = Object.freeze([...GAME_CONFIG.save.legacyKeys]);
+let localCharacterId = null;
 
 export function saveGame(gameState, options = {}) {
   const logger = options.logger || console;
   try {
     const storage = options.storage || getStorage();
-    const snapshot = createSaveSnapshot(gameState);
+    const snapshot = options.preserveTimestamp ? normalizeGameState(gameState) : createSaveSnapshot(gameState);
     storage.setItem(SAVE_KEY, serializeGame(snapshot));
+    options.onSnapshot?.(snapshot);
     return true;
   } catch (error) {
     logger.error("[KnightFall] Falha ao salvar a partida.", error);
@@ -55,6 +57,69 @@ export function deleteSave(options = {}) {
   }
 }
 
+export async function registerLocalAccount(input, options = {}) {
+  const auth = await requestLocalApi("/api/auth/register", {
+    method: "POST",
+    body: { email: input?.email, password: input?.password, characterName: input?.characterName },
+    signal: options.signal
+  });
+  return loadAuthenticatedCharacter(auth.account, options);
+}
+
+export async function loginLocalAccount(input, options = {}) {
+  const auth = await requestLocalApi("/api/auth/login", {
+    method: "POST",
+    body: { email: input?.email, password: input?.password },
+    signal: options.signal
+  });
+  return loadAuthenticatedCharacter(auth.account, options);
+}
+
+export async function logoutLocalAccount(options = {}) {
+  try {
+    await requestLocalApi("/api/auth/logout", { method: "POST", signal: options.signal });
+  } finally {
+    localCharacterId = null;
+  }
+}
+
+export async function restoreLocalSession(options = {}) {
+  const session = await requestLocalApi("/api/auth/session", { signal: options.signal });
+  return loadAuthenticatedCharacter(session.account, options);
+}
+
+export async function saveLocalAccount(gameState, options = {}) {
+  const snapshot = normalizeGameState(gameState);
+  const payload = await requestLocalApi("/api/character", {
+    method: "PUT",
+    body: { ...(localCharacterId ? { characterId: localCharacterId } : {}), saveVersion: SAVE_VERSION, state: snapshot },
+    signal: options.signal,
+    keepalive: options.keepalive
+  });
+  localCharacterId = payload.character.id;
+  return payload.character;
+}
+
+async function loadAuthenticatedCharacter(account, options = {}) {
+  if (!account?.id) throw new Error("Resposta de autenticação inválida.");
+  try {
+    const payload = await requestLocalApi("/api/character", { signal: options.signal });
+    if (!payload.character?.id || !payload.character.state) throw new Error("Resposta de personagem inválida.");
+    localCharacterId = payload.character.id;
+    return { account: { ...account, characterName: payload.character.name, hasSave: true }, state: normalizeGameState(payload.character.state), hasCharacter: true };
+  } catch (error) {
+    if (error.status !== 404) throw error;
+    localCharacterId = null;
+    return { account: { ...account, characterName: null, hasSave: false }, state: null, hasCharacter: false };
+  }
+}
+
+export function compareGameStateUpdatedAt(left, right) {
+  const leftTime = Date.parse(left?.metadata?.updatedAt) || 0;
+  const rightTime = Date.parse(right?.metadata?.updatedAt) || 0;
+  return Math.sign(leftTime - rightTime);
+}
+
 function serializeGame(gameState) {
   const validation = validateGameState(gameState);
   if (!validation.valid) throw new TypeError(`Estado recusado pelo save: ${validation.errors.join("; ")}`);
@@ -64,6 +129,30 @@ function serializeGame(gameState) {
     savedAt: new Date().toISOString(),
     state: gameState
   });
+}
+
+async function requestLocalApi(path, options = {}) {
+  const init = {
+    method: options.method || "GET",
+    headers: { Accept: "application/json" },
+    credentials: "same-origin",
+    signal: options.signal
+  };
+  if (options.body !== undefined) {
+    init.headers["Content-Type"] = "application/json";
+    init.body = JSON.stringify(options.body);
+  }
+  if (options.keepalive) init.keepalive = true;
+  const response = await fetch(path, init);
+  let payload = null;
+  try { payload = await response.json(); } catch { /* resposta inválida tratada abaixo */ }
+  if (!response.ok) {
+    const error = new Error(payload?.error || `API local respondeu com status ${response.status}.`);
+    error.status = response.status;
+    throw error;
+  }
+  if (!payload || typeof payload !== "object") throw new Error("Resposta inválida da API local.");
+  return payload;
 }
 
 export function decodeSave(json, sourceKey = SAVE_KEY) {

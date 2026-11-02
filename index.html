@@ -7,10 +7,10 @@
   <meta name="description" content="KnightFall — RPG 2D de fantasia sombria.">
   <title>KnightFall — RPG 2D</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath fill='%23151913' stroke='%23d8b45e' stroke-width='3' d='M8 5h48v40L32 59 8 45z'/%3E%3Ctext x='32' y='42' text-anchor='middle' font-size='32' font-family='serif' font-weight='bold' fill='%23f5d787'%3EK%3C/text%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=opening-2">
 </head>
 <body>
-  <main class="game-shell" aria-label="KnightFall RPG 2D">
+  <main class="game-shell opening" aria-label="KnightFall RPG 2D">
     <header class="topbar">
       <button class="brand" type="button" title="Voltar ao menu">
         <span class="brand-sigil" aria-hidden="true">K</span>
@@ -18,6 +18,7 @@
       </button>
       <div class="topbar-actions">
         <span class="save-status" id="save-status"><i></i> Progresso salvo</span>
+        <button class="icon-button help-button" id="help-button" type="button" aria-label="Ajuda e controles" aria-haspopup="dialog">?</button>
         <button class="icon-button" id="sound-button" type="button" aria-label="Desativar sons" aria-pressed="true">♪</button>
         <button class="icon-button" id="fullscreen-button" type="button" aria-label="Tela cheia">⛶</button>
       </div>
@@ -70,13 +71,13 @@
 
           <div class="skill-hotbar" id="skill-hotbar" aria-label="Habilidades ativas">
             <div class="stamina-meter" title="Vigor"><span id="stamina-bar"></span><small id="stamina-text">100</small></div>
-            <button type="button" data-skill="golpe_poderoso" aria-label="Golpe Poderoso">
+            <button type="button" data-skill="golpe_poderoso" aria-label="Golpe Poderoso, tecla 1">
               <canvas width="32" height="32" aria-hidden="true"></canvas><kbd>1</kbd><span class="skill-cooldown"></span>
             </button>
-            <button type="button" data-skill="corte_giratorio" aria-label="Corte Giratório">
+            <button type="button" data-skill="corte_giratorio" aria-label="Corte Giratório, tecla 2">
               <canvas width="32" height="32" aria-hidden="true"></canvas><kbd>2</kbd><span class="skill-cooldown"></span>
             </button>
-            <button type="button" data-skill="investida" aria-label="Investida">
+            <button type="button" data-skill="investida" aria-label="Investida, tecla 3">
               <canvas width="32" height="32" aria-hidden="true"></canvas><kbd>3</kbd><span class="skill-cooldown"></span>
             </button>
           </div>
@@ -99,28 +100,68 @@
           <div class="start-screen" id="start-screen">
             <div class="start-vignette"></div>
             <div class="start-content">
-              <span class="start-kicker">UM RPG 2D DE FANTASIA SOMBRIA</span>
-              <h1>Knight<span>Fall</span></h1>
-              <p>A escuridão sob a montanha despertou.<br>Entre, lute e volte mais forte.</p>
-              <div class="start-actions">
+              <header class="title-lockup" aria-labelledby="start-title">
+                <svg class="title-emblem" viewBox="0 0 112 128" aria-hidden="true">
+                  <path class="emblem-shadow" d="M14 12h84v70c0 18-17 29-42 40C31 111 14 100 14 82z"/>
+                  <path class="emblem-shield" d="M20 18h72v61c0 14-13 23-36 34-23-11-36-20-36-34z"/>
+                  <path class="emblem-ridge" d="M56 25v76M27 27h58"/>
+                  <path class="emblem-helm" d="M35 48l8-13h26l8 13-4 31H39z"/>
+                  <path class="emblem-visor" d="M40 51h32v10H40zM47 61v10m9-10v12m9-12v10"/>
+                  <path class="emblem-blade" d="M53 8h6l3 29-6 9-6-9zM49 37h14"/>
+                  <path class="emblem-spark" d="M18 31h8m60 0h8M31 96l6-6m44 6-6-6"/>
+                </svg>
+                <div class="title-copy">
+                  <span class="start-kicker">ECOS DA PEDRA NEGRA</span>
+                  <h1 id="start-title"><span>Knight</span><b>Fall</b></h1>
+                  <i aria-hidden="true"><span></span></i>
+                </div>
+              </header>
+              <p class="start-prologue">Sob a montanha, uma velha escuridão desperta.<br>Erga sua lâmina. Escreva sua queda — ou a dela.</p>
+              <section class="auth-panel" aria-labelledby="auth-title">
+                <h2 id="auth-title">ESCOLHA COMO ENTRAR</h2>
+                <div class="auth-choice" id="auth-choice">
+                  <button class="auth-main-action" id="show-login-button" type="button"><strong>Entrar</strong><span>Retome uma conta deste computador</span></button>
+                  <button class="auth-main-action" id="show-register-button" type="button"><strong>Criar conta</strong><span>Comece uma jornada com salvamento local</span></button>
+                  <button class="auth-guest-action" id="guest-button" type="button">Continuar como visitante</button>
+                </div>
+
+                <form class="auth-form" id="login-form" novalidate hidden>
+                  <div class="auth-form-heading"><button class="auth-back-button" type="button" data-auth-back aria-label="Voltar às opções">←</button><strong>ENTRAR NA CONTA</strong></div>
+                  <label for="login-email">E-mail</label>
+                  <input id="login-email" name="email" type="email" maxlength="254" autocomplete="username" inputmode="email" required aria-describedby="account-status">
+                  <label for="login-password">Senha</label>
+                  <input id="login-password" name="password" type="password" minlength="6" maxlength="128" autocomplete="current-password" required aria-describedby="account-status">
+                  <button class="auth-submit-button" id="login-submit-button" type="submit">Entrar</button>
+                </form>
+
+                <form class="auth-form" id="register-form" novalidate hidden>
+                  <div class="auth-form-heading"><button class="auth-back-button" type="button" data-auth-back aria-label="Voltar às opções">←</button><strong>CRIAR CONTA</strong></div>
+                  <div class="auth-field-row">
+                    <div><label for="register-email">E-mail</label><input id="register-email" name="email" type="email" maxlength="254" autocomplete="username" inputmode="email" required aria-describedby="account-status"></div>
+                    <div><label for="register-character-name">Nome do personagem</label><input id="register-character-name" name="characterName" type="text" minlength="2" maxlength="40" autocomplete="off" required aria-describedby="account-status"></div>
+                  </div>
+                  <label for="register-password">Senha <small>(mínimo de 8 caracteres)</small></label>
+                  <input id="register-password" name="password" type="password" minlength="8" maxlength="128" autocomplete="new-password" required aria-describedby="account-status">
+                  <button class="auth-submit-button" id="register-submit-button" type="submit">Criar conta</button>
+                </form>
+
+                <div class="session-summary" id="session-summary" hidden>
+                  <span>CONTA LOCAL</span><strong id="session-character-name"></strong><small id="session-email"></small>
+                  <button id="logout-button" type="button">Sair da conta</button>
+                </div>
+                <div class="session-summary" id="guest-summary" hidden>
+                  <span>MODO VISITANTE</span><strong>Jornada local</strong><small>O progresso permanece neste navegador.</small>
+                  <button id="change-mode-button" type="button">Trocar modo</button>
+                </div>
+                <small id="account-status" role="status" aria-live="polite"></small>
+                <em>Contas disponíveis somente no servidor local de desenvolvimento. Não use esta implementação em produção.</em>
+              </section>
+              <div class="start-actions" id="journey-actions" hidden>
                 <button class="primary-button" id="continue-button" type="button">Continuar jornada</button>
                 <button class="secondary-button" id="new-game-button" type="button">Novo jogo</button>
               </div>
-              <small>Setas / WASD para mover · Espaço para atacar · Shift para esquivar</small>
             </div>
           </div>
-        </div>
-
-        <div class="control-strip" aria-label="Comandos do jogo">
-          <span><kbd>WASD</kbd> ou <kbd>SETAS</kbd> Mover</span>
-          <span><kbd>ESPAÇO</kbd> Atacar</span>
-          <span><kbd>SHIFT</kbd> Esquivar</span>
-          <span><kbd>E</kbd> Interagir</span>
-          <span><kbd>Q</kbd> Usar poção</span>
-          <span><kbd>I</kbd> Inventário</span>
-          <span><kbd>F</kbd> Forja</span>
-          <span><kbd>K</kbd> Habilidades</span>
-          <span><kbd>R</kbd> Regiões</span>
         </div>
       </div>
 
@@ -165,6 +206,29 @@
       </aside>
     </section>
   </main>
+
+  <dialog class="game-dialog help-dialog" id="help-dialog" aria-labelledby="help-title">
+    <div class="dialog-frame help-frame">
+      <button class="dialog-close" id="help-close-button" type="button" aria-label="Fechar ajuda">×</button>
+      <header>
+        <span class="eyebrow">MANUAL DO VIAJANTE</span>
+        <h2 id="help-title">Controles</h2>
+        <p>Os comandos ficam disponíveis aqui sem encobrir o mundo.</p>
+      </header>
+      <div class="help-controls">
+        <div><kbd>WASD</kbd><span><strong>Movimento</strong><small>Também funciona com as setas.</small></span></div>
+        <div><kbd>ESPAÇO</kbd><span><strong>Ataque</strong><small>Golpe básico com a arma equipada.</small></span></div>
+        <div><kbd>SHIFT</kbd><span><strong>Esquiva</strong><small>Deslocamento rápido com breve proteção.</small></span></div>
+        <div><kbd>E</kbd><span><strong>Interagir</strong><small>Fale, entre e use objetos próximos.</small></span></div>
+        <div><kbd>Q</kbd><span><strong>Poção</strong><small>Consome uma poção de cura.</small></span></div>
+        <div><kbd>1–3</kbd><span><strong>Habilidades</strong><small>Ativa as técnicas da barra inferior.</small></span></div>
+        <div><kbd>I</kbd><span><strong>Inventário</strong><small>Equipamentos e mochila.</small></span></div>
+        <div><kbd>K</kbd><span><strong>Maestria</strong><small>Habilidades e evolução da espada.</small></span></div>
+        <div><kbd>R</kbd><span><strong>Regiões</strong><small>Mapa disponível na vila.</small></span></div>
+        <div><kbd>F</kbd><span><strong>Forja</strong><small>Abre a estação quando disponível.</small></span></div>
+      </div>
+    </div>
+  </dialog>
 
   <dialog class="game-dialog merchant-dialog" id="merchant-dialog">
     <form method="dialog" class="dialog-frame">

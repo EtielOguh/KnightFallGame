@@ -25,16 +25,25 @@ import {
   calculateSalePrice, canEnhanceEquipment, enhanceEquipment, getEnhancementPreview,
   getSaleReturn, purchaseEquipment, sellEquipment
 } from "./forge.js";
-import { hasSave as hasStoredSave, loadGame as restoreGame, saveGame as persistGame } from "./save.js";
+import {
+  compareGameStateUpdatedAt, hasSave as hasStoredSave, loadGame as restoreGame, loginLocalAccount, logoutLocalAccount,
+  registerLocalAccount, restoreLocalSession, saveGame as persistGame, saveLocalAccount
+} from "./save.js";
 import { createInitialState } from "./state.js";
 
 const canvas = document.querySelector("#game-canvas");
 const ctx = canvas.getContext("2d", { alpha: false });
+const gameShell = document.querySelector(".game-shell");
 const W = canvas.width;
 const H = canvas.height;
 
 const ui = Object.fromEntries([
   "start-screen", "continue-button", "new-game-button", "player-name", "side-player-name",
+  "auth-choice", "show-login-button", "show-register-button", "guest-button", "login-form",
+  "login-email", "login-password", "login-submit-button", "register-form", "register-email",
+  "register-password", "register-character-name", "register-submit-button", "session-summary",
+  "session-character-name", "session-email", "logout-button", "guest-summary", "change-mode-button",
+  "journey-actions", "account-status",
   "level-value", "hp-text", "hp-bar", "xp-bar", "attack-stat", "armor-stat", "kills-stat",
   "potion-count", "coin-count", "potion-button", "cave-progress", "objective-title",
   "objective-detail", "location-badge", "interaction-prompt", "interaction-text", "enemy-hud",
@@ -42,7 +51,7 @@ const ui = Object.fromEntries([
   "floor-advance-button", "floor-stay-button", "floor-exit-button",
   "enemy-name", "enemy-phase", "enemy-hp-text", "enemy-hp-bar", "toast", "merchant-dialog", "merchant-coins",
   "damage-price", "armor-price", "potion-price", "rest-price", "death-dialog", "return-button", "sound-button",
-  "fullscreen-button", "viewport", "save-status", "inventory-button", "inventory-summary",
+  "fullscreen-button", "help-button", "help-dialog", "help-close-button", "viewport", "save-status", "inventory-button", "inventory-summary",
   "inventory-dialog", "inventory-capacity", "inventory-stats", "equipment-slots",
   "inventory-grid", "inventory-empty", "item-detail", "item-tooltip", "cave-floor-badge",
   "cave-floor-value",
@@ -59,6 +68,11 @@ const ui = Object.fromEntries([
 
 let state = createInitialState();
 let playing = false;
+let sessionMode = "pending";
+let activeAccount = null;
+let serverAccountState = null;
+let accountSaveQueue = Promise.resolve();
+let accountSessionEpoch = 0;
 let encounter = createRuntimeEncounter();
 let farmRuntime = null;
 let pathfindBudget = 0;
@@ -140,16 +154,24 @@ function clearEncounterRuntime(status = "idle") {
 }
 
 function hasSave() {
-  return hasStoredSave();
+  if (sessionMode === "pending") return false;
+  if (sessionMode === "visitor") return hasStoredSave();
+  return Boolean(serverAccountState);
 }
 
 function saveGame(showStatus = false) {
   if (!playing) return;
-  const saved = persistGame(state);
+  let snapshot = null;
+  const saved = persistGame(state, {
+    ...(sessionMode === "account" ? { storage: accountStorage(activeAccount.id) } : {}),
+    onSnapshot(value) { snapshot = value; }
+  });
   if (!saved) {
     showToast("Não foi possível salvar o progresso.", true);
     return;
   }
+  state.metadata.updatedAt = snapshot.metadata.updatedAt;
+  if (sessionMode === "account") queueAccountSave(activeAccount.id, snapshot);
   if (showStatus) {
     ui["save-status"].classList.add("saving");
     ui["save-status"].lastChild.textContent = " Progresso salvo";
@@ -158,17 +180,24 @@ function saveGame(showStatus = false) {
 }
 
 function loadGame() {
-  const restored = restoreGame();
+  if (sessionMode === "pending") return false;
+  const localState = restoreGame(sessionMode === "account" ? { storage: accountStorage(activeAccount.id) } : {});
+  const restored = sessionMode === "account" ? (serverAccountState || localState) : localState;
   if (!restored) return false;
   state = restored;
+  persistGame(state, sessionMode === "account" ? { storage: accountStorage(activeAccount.id), preserveTimestamp: true } : { preserveTimestamp: true });
   state.player.x = clamp(state.player.x, 70, 890);
   state.player.y = clamp(state.player.y, 105, 485);
   return true;
 }
 
 function startGame(useSave) {
+  if (sessionMode === "pending") {
+    setAccountStatus("Escolha entrar, criar conta ou continuar como visitante.", true);
+    return;
+  }
   const resumed = Boolean(useSave && loadGame());
-  if (!resumed) state = createInitialState();
+  if (!resumed) state = createInitialState({ name: activeAccount?.characterName });
   playing = true;
   clearEncounterRuntime();
   attackTimer = 0;
@@ -183,6 +212,7 @@ function startGame(useSave) {
   ui["start-screen"].inert = true;
   ui["start-screen"].classList.add("hidden");
   ui["start-screen"].setAttribute("aria-hidden", "true");
+  gameShell.classList.remove("opening");
   ui["continue-button"].hidden = false;
   if (resumed && state.world.scene === "cave" && currentRegionProgress().expedition) {
     prepareExpeditionAfterLoad(currentRegionProgress());
@@ -193,6 +223,211 @@ function startGame(useSave) {
   updateUI();
   showToast(resumed && state.world.scene === "cave" ? "Incursão retomada com segurança." : resumed ? "Jornada retomada." : "A caverna aguarda ao nordeste.");
   playTone(174, .07, .12, "triangle");
+  if (!resumed) saveGame(true);
+}
+
+function accountStorage(accountId) {
+  const prefix = `knightfall.account.${accountId}.`;
+  return {
+    getItem(key) { return localStorage.getItem(`${prefix}${key}`); },
+    setItem(key, value) { localStorage.setItem(`${prefix}${key}`, value); },
+    removeItem(key) { localStorage.removeItem(`${prefix}${key}`); }
+  };
+}
+
+function queueAccountSave(accountId, snapshot) {
+  const epoch = accountSessionEpoch;
+  accountSaveQueue = accountSaveQueue
+    .catch(() => {})
+    .then(() => {
+      if (epoch !== accountSessionEpoch || sessionMode !== "account" || activeAccount?.id !== accountId) return null;
+      return saveLocalAccount(snapshot);
+    })
+    .then(character => {
+      if (character && activeAccount?.id === accountId) setAccountStatus(`Progresso de ${character.name} sincronizado localmente.`);
+    })
+    .catch(error => {
+      if (activeAccount?.id === accountId) {
+        setAccountStatus(`Save local preservado; sincronização falhou: ${error.message}`, true);
+        if (playing) showToast("Progresso salvo localmente; sincronização falhou.", true);
+      }
+      return null;
+    });
+}
+
+function setAccountStatus(message, error = false) {
+  ui["account-status"].textContent = message;
+  ui["account-status"].classList.toggle("error", error);
+}
+
+function setAuthLoading(form, loading) {
+  form.setAttribute("aria-busy", String(loading));
+  for (const control of form.elements) control.disabled = loading;
+  const submit = form.querySelector("[type=submit]");
+  if (submit) {
+    submit.dataset.idleLabel ||= submit.textContent;
+    submit.textContent = loading ? "Aguarde…" : submit.dataset.idleLabel;
+  }
+}
+
+function showAuthView(view = "choice") {
+  ui["auth-choice"].hidden = view !== "choice";
+  ui["login-form"].hidden = view !== "login";
+  ui["register-form"].hidden = view !== "register";
+  ui["session-summary"].hidden = view !== "account";
+  ui["guest-summary"].hidden = view !== "guest";
+  if (view === "login") ui["login-email"].focus();
+  if (view === "register") ui["register-email"].focus();
+}
+
+function validateAuthForm(form) {
+  let firstInvalid = null;
+  for (const input of form.querySelectorAll("input")) {
+    input.setAttribute("aria-invalid", String(!input.validity.valid));
+    if (!input.validity.valid && !firstInvalid) firstInvalid = input;
+  }
+  if (!firstInvalid) return true;
+  setAccountStatus(firstInvalid.validity.typeMismatch ? "Informe um e-mail válido." : firstInvalid.validity.tooShort ? `Use pelo menos ${firstInvalid.minLength} caracteres.` : "Preencha todos os campos obrigatórios.", true);
+  firstInvalid.focus();
+  return false;
+}
+
+async function activateSession(result) {
+  accountSessionEpoch += 1;
+  sessionMode = "account";
+  activeAccount = result.account;
+  let syncFailure = null;
+  const storage = accountStorage(activeAccount.id);
+  const accountLocalState = restoreGame({ storage });
+  if (!result.hasCharacter) {
+    const importCandidate = accountLocalState || restoreGame();
+    if (importCandidate && window.confirm("Esta conta ainda não possui personagem. Deseja importar o save local existente? O save original será preservado.")) {
+      serverAccountState = importCandidate;
+      activeAccount.characterName = importCandidate.player.name;
+      persistGame(importCandidate, { storage, preserveTimestamp: true });
+      try { await saveLocalAccount(importCandidate); }
+      catch (error) { syncFailure = error; }
+    } else {
+      serverAccountState = null;
+      activeAccount.characterName ||= "Aldric";
+    }
+  } else {
+    serverAccountState = resolveAccountSaveConflict(accountLocalState, result.state);
+    if (serverAccountState) persistGame(serverAccountState, { storage, preserveTimestamp: true });
+  }
+  ui["session-character-name"].textContent = activeAccount.characterName;
+  ui["session-email"].textContent = activeAccount.email;
+  showAuthView("account");
+  refreshJourneyActions();
+  if (syncFailure) setAccountStatus(`Save importado e preservado localmente; sincronização falhou: ${syncFailure.message}`, true);
+  else setAccountStatus(`${activeAccount.characterName} conectado${hasSave() ? " · progresso disponível" : " · nova jornada"}.`);
+}
+
+function resolveAccountSaveConflict(localState, remoteState) {
+  if (!localState) return remoteState;
+  if (!remoteState) return localState;
+  const comparison = compareGameStateUpdatedAt(localState, remoteState);
+  if (comparison === 0) return remoteState;
+  if (comparison > 0) {
+    const keepLocal = window.confirm("O save deste navegador é mais recente que o save da conta. Deseja usar o progresso local e sincronizá-lo? Cancelar carregará o save mais antigo da conta.");
+    if (keepLocal) queueAccountSave(activeAccount.id, localState);
+    return keepLocal ? localState : remoteState;
+  }
+  const useRemote = window.confirm("O save da conta é mais recente que o save deste navegador. Deseja carregá-lo? Cancelar manterá e sincronizará o save local mais antigo.");
+  if (!useRemote) queueAccountSave(activeAccount.id, localState);
+  return useRemote ? remoteState : localState;
+}
+
+function chooseGuestMode() {
+  sessionMode = "visitor";
+  activeAccount = null;
+  serverAccountState = null;
+  showAuthView("guest");
+  refreshJourneyActions();
+  setAccountStatus(hasSave() ? "Progresso de visitante disponível neste navegador." : "Modo visitante pronto para uma nova jornada.");
+}
+
+function refreshJourneyActions() {
+  const ready = sessionMode !== "pending";
+  ui["journey-actions"].hidden = !ready;
+  ui["continue-button"].hidden = !ready || !hasSave();
+  ui["continue-button"].disabled = !ready || !hasSave();
+  ui["new-game-button"].disabled = !ready;
+}
+
+async function submitLogin(event) {
+  event.preventDefault();
+  if (!validateAuthForm(ui["login-form"])) return;
+  setAuthLoading(ui["login-form"], true);
+  setAccountStatus("Entrando na conta local…");
+  try {
+    const result = await loginLocalAccount({ email: ui["login-email"].value, password: ui["login-password"].value });
+    ui["login-password"].value = "";
+    await activateSession(result);
+  } catch (error) {
+    setAccountStatus(`${error.message}${error.message.includes("fetch") ? " Inicie com npm run dev." : ""}`, true);
+  } finally {
+    setAuthLoading(ui["login-form"], false);
+  }
+}
+
+async function submitRegistration(event) {
+  event.preventDefault();
+  if (!validateAuthForm(ui["register-form"])) return;
+  setAuthLoading(ui["register-form"], true);
+  setAccountStatus("Criando conta local…");
+  try {
+    const result = await registerLocalAccount({
+      email: ui["register-email"].value,
+      password: ui["register-password"].value,
+      characterName: ui["register-character-name"].value
+    });
+    ui["register-password"].value = "";
+    await activateSession(result);
+  } catch (error) {
+    setAccountStatus(`${error.message}${error.message.includes("fetch") ? " Inicie com npm run dev." : ""}`, true);
+  } finally {
+    setAuthLoading(ui["register-form"], false);
+  }
+}
+
+async function leaveAccount() {
+  ui["logout-button"].disabled = true;
+  setAccountStatus("Encerrando sessão…");
+  await accountSaveQueue.catch(() => {});
+  try { await logoutLocalAccount(); }
+  catch (error) { console.warn("[KnightFall] Não foi possível avisar o servidor sobre a saída.", error); }
+  activeAccount = null;
+  serverAccountState = null;
+  accountSessionEpoch += 1;
+  accountSaveQueue = Promise.resolve();
+  sessionMode = "pending";
+  playing = false;
+  gameShell.classList.add("opening");
+  keys.clear();
+  state = createInitialState();
+  clearEncounterRuntime();
+  updateUI();
+  ui["login-password"].value = "";
+  ui["register-password"].value = "";
+  ui["journey-actions"].hidden = true;
+  showAuthView("choice");
+  setAccountStatus("Sessão encerrada.");
+  ui["logout-button"].disabled = false;
+}
+
+async function resumeAccountSession() {
+  setAccountStatus("Verificando sessão local…");
+  try {
+    await activateSession(await restoreLocalSession());
+  } catch (error) {
+    sessionMode = "pending";
+    showAuthView("choice");
+    refreshJourneyActions();
+    setAccountStatus(error.status === 401
+      ? "Escolha entrar, criar conta ou continuar como visitante."
+      : "Servidor de contas indisponível. O modo visitante continua disponível.", error.status !== 401);
+  }
 }
 
 function updateUI() {
@@ -2990,6 +3225,8 @@ function loop(now) {
 }
 
 document.addEventListener("keydown", event => {
+  if (event.target.closest?.("input, select, textarea, button")) return;
+  if (!playing) return;
   if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space", "ShiftLeft", "ShiftRight"].includes(event.code)) event.preventDefault();
   if (event.code === "Space" && !event.repeat) playerAttack();
   else if ((event.code === "ShiftLeft" || event.code === "ShiftRight") && !event.repeat) playerDodge();
@@ -3044,6 +3281,25 @@ document.querySelectorAll("[data-buy]").forEach(button => button.addEventListene
 
 ui["continue-button"].addEventListener("click", () => startGame(true));
 ui["new-game-button"].addEventListener("click", () => startGame(false));
+ui["show-login-button"].addEventListener("click", () => { setAccountStatus(""); showAuthView("login"); });
+ui["show-register-button"].addEventListener("click", () => { setAccountStatus(""); showAuthView("register"); });
+ui["guest-button"].addEventListener("click", chooseGuestMode);
+ui["change-mode-button"].addEventListener("click", () => {
+  sessionMode = "pending";
+  ui["journey-actions"].hidden = true;
+  showAuthView("choice");
+  setAccountStatus("Escolha como deseja continuar.");
+});
+ui["login-form"].addEventListener("submit", submitLogin);
+ui["register-form"].addEventListener("submit", submitRegistration);
+ui["logout-button"].addEventListener("click", leaveAccount);
+document.querySelectorAll("[data-auth-back]").forEach(button => button.addEventListener("click", () => {
+  button.closest("form").reset();
+  for (const input of button.closest("form").querySelectorAll("input")) input.removeAttribute("aria-invalid");
+  setAccountStatus("");
+  showAuthView("choice");
+}));
+document.querySelectorAll(".auth-form input").forEach(input => input.addEventListener("input", () => input.removeAttribute("aria-invalid")));
 ui["potion-button"].addEventListener("click", usePotion);
 ui["inventory-button"].addEventListener("click", openInventory);
 ui["skills-button"].addEventListener("click", openSkills);
@@ -3060,6 +3316,10 @@ ui["return-button"].addEventListener("click", returnToVillage);
 ui["floor-advance-button"].addEventListener("click", requestFloorAdvance);
 ui["floor-stay-button"].addEventListener("click", remainOnCurrentFloor);
 ui["floor-exit-button"].addEventListener("click", exitCave);
+ui["help-button"].addEventListener("click", () => {
+  if (!ui["help-dialog"].open) ui["help-dialog"].showModal();
+});
+ui["help-close-button"].addEventListener("click", () => ui["help-dialog"].close());
 ui["sound-button"].addEventListener("click", () => {
   state.settings.audioEnabled = !state.settings.audioEnabled;
   ui["sound-button"].setAttribute("aria-pressed", String(state.settings.audioEnabled));
@@ -3077,13 +3337,16 @@ document.querySelector(".brand").addEventListener("click", () => {
   saveGame();
   playing = false;
   keys.clear();
+  gameShell.classList.add("opening");
   ui["start-screen"].classList.remove("hidden");
   ui["start-screen"].removeAttribute("aria-hidden");
   ui["start-screen"].inert = false;
-  ui["continue-button"].hidden = false;
+  refreshJourneyActions();
 });
 
-ui["continue-button"].hidden = !hasSave();
+showAuthView("choice");
+refreshJourneyActions();
+resumeAccountSession();
 updateUI();
 requestAnimationFrame(loop);
 

@@ -4,15 +4,21 @@ RPG de fantasia sombria para navegador, feito com HTML, CSS, Canvas e JavaScript
 
 ## Executar
 
-Como o projeto usa módulos JavaScript, inicie um servidor local na pasta do projeto:
+Use o servidor Node.js local, sem dependências externas:
 
 ```sh
-python3 -m http.server 8000
+npm run dev
 ```
 
-Depois acesse `http://localhost:8000`.
+Depois acesse `http://127.0.0.1:4173`, crie uma conta de teste e inicie uma jornada. O servidor aceita conexões apenas em `127.0.0.1` e foi criado exclusivamente para desenvolvimento local; a autenticação local não é adequada para produção ou exposição à internet.
 
 Não há dependências de produção nem processo de build.
+
+As contas e os personagens ficam em coleções separadas dentro de `data/local-accounts.json`, um JSON legível e ignorado pelo Git. O servidor cria esse arquivo automaticamente. `data/local-accounts.example.json` documenta o formato vazio que pode ser versionado. Senhas são derivadas com `scrypt` e salt exclusivo; a sessão usa um cookie `HttpOnly` e `SameSite=Strict`. O navegador mantém também um cache imediato isolado por conta no `localStorage`.
+
+Durante a partida, o cache local é gravado primeiro e o mesmo snapshot é enviado à API em segundo plano. Falhas de rede não interrompem o jogo. No login, divergências são comparadas por `metadata.updatedAt` e exigem confirmação antes de substituir o progresso mais recente. Contas sem personagem podem importar explicitamente um save visitante antigo; a origem não é apagada.
+
+A API local oferece `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/session`, `POST /api/auth/logout`, `GET /api/character` e `PUT /api/character`. Ela aceita JSON limitado a 256 KiB, valida o estado com `js/state.js`, vincula o personagem à conta da sessão e substitui o arquivo de dados por renomeação atômica. O diretório `data/`, hashes, arquivos internos e caminhos arbitrários não são publicados pelo servidor estático.
 
 ## Como jogar
 
@@ -54,7 +60,7 @@ Cada incursão possui dez andares. Ao cumprir a meta dos andares 1–9, o HUD of
 - Inventário responsivo, comparação, itens novos e seis slots de equipamento
 - Cinco raridades e atributos de equipamento aplicados diretamente ao combate
 - Ícones e camadas vestidas de arma, capacete, peitoral e botas desenhados proceduralmente
-- Persistência automática no `localStorage`, incluindo incursão ativa, andar, estado, metas e Boss
+- Contas locais de teste com save em JSON e cache automático isolado por conta no `localStorage`
 - Interface responsiva, tela cheia e opção de som
 
 ## Estrutura
@@ -62,6 +68,8 @@ Cada incursão possui dez andares. Ao cumprir a meta dos andares 1–9, o HUD of
 ```text
 index.html          HUD, painéis e diálogos
 style.css           direção visual e layout responsivo
+server.mjs          servidor localhost, API e persistência atômica de contas
+data/               exemplo versionado e arquivo real ignorado de contas locais
 js/game.js          loop, input, arte procedural, combate e IA
 js/data.js          catálogos e configuração central de balanceamento
 js/dungeon.js       regiões, estágios, desbloqueios e recompensas de encontro

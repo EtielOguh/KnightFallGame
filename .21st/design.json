@@ -33,8 +33,14 @@
     "patterns": []
   },
   "constraints": {
-    "must": [],
-    "avoid": []
+    "must": [
+      "Use the live procedural Canvas world as the opening-screen artwork and restore the complete HUD only after play begins.",
+      "Keep login, registration, visitor mode, audio, fullscreen, and keyboard navigation accessible on the opening screen."
+    ],
+    "avoid": [
+      "Do not show gameplay sidebars, progress indicators, hotbars, or permanent control instructions over the opening screen.",
+      "Do not replace the game world with generic gradients or third-party fantasy artwork."
+    ]
   },
   "decisions": [
     "Use a readable dark-fantasy HUD with aged-gold accents around a 16:9 canvas world.",
@@ -47,7 +53,10 @@
     "Present warrior skills as compact progression cards beside a persistent sword-mastery panel, with a three-slot Canvas hotbar separated from movement and interaction controls.",
     "Present world travel as compact dark-fantasy region cards that clearly separate playable, locked, and planned destinations while preserving the Canvas game as the visual focus.",
     "Reserve separate HUD safe zones for hero status, location, enemy status, objectives, interaction prompts, and the skill hotbar; expose floor advancement as a compact objective action without pausing continuous farm.",
-    "Keep cave progression inside the existing objective card: two compact actions for Advance/Stay, one full-width Exit action after a boss, and no blocking completion modal."
+    "Keep cave progression inside the existing objective card: two compact actions for Advance/Stay, one full-width Exit action after a boss, and no blocking completion modal.",
+    "Use one compact dark-fantasy authentication panel on the existing start screen: show login or registration one at a time, keep visitor access visually separate, and reveal journey actions only after a session mode is chosen.",
+    "Treat the opening as a cinematic title layer over the live village Canvas: use an original inline shield-and-helm emblem, a restrained gold wordmark, a left-aligned action menu, and no gameplay chrome.",
+    "Keep controls in a dedicated help dialog available from a discreet top-right button instead of reserving permanent vertical space below the world."
   ],
   "evidence": [],
   "generatedAt": "2026-10-29T04:00:00.000Z"
