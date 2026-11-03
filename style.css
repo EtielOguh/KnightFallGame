@@ -136,13 +136,14 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--gold-bright); o
 .objective-progress { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; padding-top: 7px; border-top: 1px solid #3b4134; color: #9fa18f; font: 800 .52rem/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: .08em; }
 .objective-progress b { color: var(--gold-bright); }
 .objective-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; pointer-events: auto; }
-.objective-actions:has(.floor-exit-button:not([hidden])) { grid-template-columns: 1fr; }
 .floor-advance-button { width: 100%; margin-top: 8px; padding: 7px 9px; border: 1px solid #a48848; background: #9b7939; color: #15140e; cursor: pointer; pointer-events: auto; font: 850 .56rem/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: .07em; text-transform: uppercase; }
 .objective-actions .floor-advance-button { margin-top: 0; }
 .floor-advance-button:hover { background: #c39a4c; }
 .floor-advance-button.pending { border-color: #70827a; background: #263631; color: #c7ddd5; }
-.floor-stay-button, .floor-exit-button { width: 100%; padding: 7px 9px; border: 1px solid #596050; background: #1a2118; color: #c9c6b7; cursor: pointer; font: 850 .56rem/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: .07em; text-transform: uppercase; }
-.floor-stay-button:hover, .floor-exit-button:hover { border-color: #8b855e; color: var(--gold-bright); }
+.floor-stay-button, .floor-exit-button, .floor-select-button, .boss-rematch-button { width: 100%; padding: 7px 9px; border: 1px solid #596050; background: #1a2118; color: #c9c6b7; cursor: pointer; font: 850 .56rem/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: .07em; text-transform: uppercase; }
+.floor-stay-button:hover, .floor-exit-button:hover, .floor-select-button:hover, .boss-rematch-button:hover { border-color: #8b855e; color: var(--gold-bright); }
+.floor-select-button, .floor-exit-button { grid-column: 1 / -1; }
+.boss-rematch-button { border-color: #a48848; color: var(--gold-bright); }
 
 .location-badge { position: absolute; z-index: 4; top: 17px; left: 50%; padding: 6px 12px; transform: translateX(-50%); border: 1px solid #77755b88; background: #10140ee8; color: #d8d2bc; font: 700 .6rem/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: .13em; text-transform: uppercase; pointer-events: none; }
 .location-badge span { margin-right: 5px; color: var(--gold); }
@@ -196,6 +197,29 @@ kbd { display: inline-grid; min-width: 24px; min-height: 22px; padding: 2px 6px;
 .region-card dd { margin: 4px 0 0; color: #ddd6c1; font-size: .58rem; }
 .region-card button { width: 100%; padding: 8px; border: 1px solid #7d6d45; background: #302b1d; color: #ead897; cursor: pointer; font-size: .59rem; }
 .region-card button:disabled { border-color: #3e4339; background: #20231d; color: #73776b; cursor: not-allowed; }
+.floor-selector { margin-top: 18px; padding: 16px; border: 1px solid #46503b; background: #11150f; }
+.floor-selector-back { padding: 0 0 9px; border: 0; background: transparent; color: #aaa994; cursor: pointer; font: 700 .58rem/1 var(--pixel-font); }
+.floor-selector-back:hover { color: var(--gold-bright); }
+.floor-selector header { padding: 11px 0 13px; border-top: 1px solid #30382a; }
+.floor-selector h3 { margin: 5px 0 4px; font-size: 1rem; }
+.floor-selector header p { margin: 0; color: var(--muted); font: .6rem/1.35 ui-sans-serif, system-ui, sans-serif; }
+.floor-grid { display: grid; grid-template-columns: repeat(5, minmax(48px, 1fr)); gap: 7px; }
+.floor-tile { position: relative; display: grid; min-height: 58px; padding: 7px 5px; place-content: center; border: 1px solid #434b3d; background: #171c15; color: #b9b9aa; cursor: pointer; text-align: center; }
+.floor-tile strong { color: #e1dac5; font-size: .72rem; }
+.floor-tile small { margin-top: 4px; color: #858b7b; font: .45rem/1 ui-sans-serif, system-ui, sans-serif; letter-spacing: .05em; text-transform: uppercase; }
+.floor-tile:hover:not(:disabled) { border-color: #8e7b4b; background: #22261b; }
+.floor-tile.completed { border-color: #59694d; }
+.floor-tile.frontier { box-shadow: inset 0 2px #8c7745; }
+.floor-tile.boss { border-color: #84594a; background: #211714; }
+.floor-tile.boss strong::before { margin-right: 5px; color: var(--gold); content: "♛"; }
+.floor-tile.selected { border-color: var(--gold-bright); background: #37301d; box-shadow: inset 0 0 0 1px #d8b45e55; }
+.floor-tile:disabled { cursor: not-allowed; filter: saturate(.3); opacity: .42; }
+.floor-selection-detail { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; align-items: center; margin-top: 12px; padding: 12px; border: 1px solid #383f32; background: #0d110c; }
+.floor-selection-detail span, .floor-selection-detail strong, .floor-selection-detail small { display: block; }
+.floor-selection-detail span { color: var(--gold); font: 800 .48rem/1 var(--pixel-font); letter-spacing: .12em; }
+.floor-selection-detail strong { margin-top: 5px; color: #e3dcc7; font-size: .68rem; }
+.floor-selection-detail small { margin-top: 4px; color: #929687; font: .55rem/1.35 ui-sans-serif, system-ui, sans-serif; }
+.floor-selection-detail .primary-button { min-width: 170px; }
 
 .skills-dialog { width: min(900px, calc(100% - 24px)); }
 .skills-frame { padding: 22px; }
@@ -590,6 +614,11 @@ button.inventory-row:hover { background: #20251d; }
   .skills-dialog { width: calc(100% - 10px); max-height: calc(100vh - 10px); }
   .region-dialog { width: calc(100% - 10px); max-height: calc(100vh - 10px); }
   .region-frame { max-height: calc(100vh - 10px); padding: 13px; overflow-y: auto; }
+  .floor-selector { padding: 11px; }
+  .floor-grid { grid-template-columns: repeat(5, minmax(42px, 1fr)); gap: 5px; }
+  .floor-tile { min-height: 52px; }
+  .floor-selection-detail { grid-template-columns: 1fr; }
+  .floor-selection-detail .primary-button { width: 100%; min-width: 0; }
   .skills-frame { max-height: calc(100vh - 10px); padding: 13px; overflow-y: auto; }
   .skills-header { padding-right: 23px; }
   .skill-card-list { grid-template-columns: 1fr; }

@@ -4,11 +4,11 @@ import assert from "node:assert/strict";
 import { EQUIPMENT_SLOTS, GAME_CONFIG, ITEMS, SKILLS } from "../js/data.js";
 import {
   EXPEDITION_STATES, abandonCaveExpedition, advanceCaveFloor, beginCaveExpedition,
-  canSpawnCommonEnemies, createCaveProgress,
+  canSelectCaveFloor, canSpawnCommonEnemies, createCaveProgress,
   createEncounterSpec, createRegionProgress, createWavePlan, getCaveTier, getFloorFarmConfig,
   finishCaveExit, getFloorAdvanceState, getFloorRule, getFloorUnlockTarget, getRegionConfig, grantEncounterRewards,
   markBossSpawned, prepareExpeditionAfterLoad, recordFloorKill, regionUnlockStatus,
-  startNewCaveExpedition, stayOnCompletedFloor
+  startBossRematch, startExpeditionAtFloor, startNewCaveExpedition, stayOnCompletedFloor
 } from "../js/dungeon.js";
 import {
   activeEnemyCap, addOwnedProjectile, claimEnemyReward, createFarmRuntime,
@@ -347,6 +347,50 @@ test("andar da incursão e maior andar desbloqueado evoluem separadamente", () =
   abandonCaveExpedition(progress);
   assert.equal(progress.selectedFloor, 2);
   assert.equal(progress.highestUnlockedFloor, 2);
+});
+
+test("seletor permite voltar a andar desbloqueado sem reduzir o maior avanço", () => {
+  const progress = createCaveProgress({ highestUnlockedFloor: 7, selectedFloor: 7 });
+  assert.equal(canSelectCaveFloor(progress, 3).ok, true);
+  assert.equal(canSelectCaveFloor(progress, 8).ok, false);
+  const selected = startExpeditionAtFloor(progress, 3, GAME_CONFIG.firstCave, { id: "farm-floor-3" });
+  assert.equal(selected.ok, true);
+  assert.equal(selected.mode, "farm");
+  assert.equal(progress.expedition.floor, 3);
+  assert.equal(progress.expedition.state, EXPEDITION_STATES.FARMING);
+  assert.equal(progress.selectedFloor, 3);
+  assert.equal(progress.highestUnlockedFloor, 7);
+  assert.equal(canSpawnCommonEnemies(progress), true);
+});
+
+test("andar de fronteira preserva progresso parcial e troca invalida inimigos antigos", () => {
+  const progress = createCaveProgress({ highestUnlockedFloor: 7, selectedFloor: 7 });
+  const frontier = startExpeditionAtFloor(progress, 7, GAME_CONFIG.firstCave, { id: "frontier-7" });
+  assert.equal(frontier.mode, "progression");
+  for (let kill = 0; kill < 4; kill += 1) recordFloorKill(progress, 7, GAME_CONFIG.firstCave, { expeditionId: "frontier-7" });
+  const farm = startExpeditionAtFloor(progress, 3, GAME_CONFIG.firstCave, { id: "farm-3" });
+  assert.equal(farm.ok, true);
+  assert.equal(progress.floorKills[7], 4);
+  const stale = recordFloorKill(progress, 7, GAME_CONFIG.firstCave, { expeditionId: "frontier-7" });
+  assert.equal(stale.counted, false);
+  assert.equal(stale.reason, "enemy_outside_expedition");
+  const resumed = startExpeditionAtFloor(progress, 7, GAME_CONFIG.firstCave, { id: "frontier-7-return" });
+  assert.equal(resumed.expedition.floorKills[7], 4);
+});
+
+test("chefe só oferece reencontro direto após uma vitória", () => {
+  const progress = createCaveProgress({ highestUnlockedFloor: 10 });
+  assert.equal(startBossRematch(progress).ok, false);
+  const preparation = startExpeditionAtFloor(progress, 10, GAME_CONFIG.firstCave, { id: "boss-first" });
+  assert.equal(preparation.mode, "boss_preparation");
+  assert.equal(preparation.expedition.state, EXPEDITION_STATES.BOSS_PREPARATION);
+  progress.bossVictories = 1;
+  const rematch = startBossRematch(progress, GAME_CONFIG.firstCave, { id: "boss-repeat" });
+  assert.equal(rematch.ok, true);
+  assert.equal(rematch.mode, "boss_rematch");
+  assert.equal(rematch.expedition.state, EXPEDITION_STATES.BOSS_PENDING);
+  assert.equal(rematch.expedition.bossUnlocked, true);
+  assert.equal(rematch.expedition.floorKills[10], getFloorUnlockTarget(10));
 });
 
 test("avanço dentro da caverna só fica disponível após a meta permanente", () => {

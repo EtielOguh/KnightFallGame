@@ -52,6 +52,8 @@
               <div class="objective-actions" id="objective-actions" hidden>
                 <button class="floor-advance-button" id="floor-advance-button" type="button" hidden>Avançar</button>
                 <button class="floor-stay-button" id="floor-stay-button" type="button" hidden>Permanecer</button>
+                <button class="floor-select-button" id="floor-select-button" type="button" hidden>Escolher andar</button>
+                <button class="boss-rematch-button" id="boss-rematch-button" type="button" hidden>Reenfrentar chefe</button>
                 <button class="floor-exit-button" id="floor-exit-button" type="button" hidden>Sair da cave</button>
               </div>
             </section>
@@ -335,9 +337,22 @@
   <dialog class="game-dialog region-dialog" id="region-dialog">
     <div class="dialog-frame region-frame">
       <button class="dialog-close" id="region-close-button" type="button" aria-label="Fechar mapa">×</button>
-      <header class="region-header"><span class="eyebrow">CAMINHOS DE KNIGHTFALL</span><h2>Mapa de Regiões</h2><p>Escolha uma região desbloqueada. O progresso de cada jornada é preservado separadamente.</p></header>
+      <header class="region-header" id="region-header"><span class="eyebrow">CAMINHOS DE KNIGHTFALL</span><h2>Mapa de Regiões</h2><p>Escolha uma região desbloqueada. O progresso de cada jornada é preservado separadamente.</p></header>
       <div class="region-grid" id="region-grid"></div>
-      <footer>Regiões anteriores permanecem disponíveis depois de novas conquistas.</footer>
+      <section class="floor-selector" id="floor-selector" aria-labelledby="floor-selector-title" hidden>
+        <button class="floor-selector-back" id="floor-selector-back" type="button">← Voltar às regiões</button>
+        <header>
+          <span class="eyebrow">SELEÇÃO DE ANDAR</span>
+          <h3 id="floor-selector-title">Caverna Sombria</h3>
+          <p id="floor-selector-progress">Melhor avanço: andar 1</p>
+        </header>
+        <div class="floor-grid" id="floor-grid" role="listbox" aria-label="Andares disponíveis"></div>
+        <div class="floor-selection-detail" aria-live="polite">
+          <div><span id="floor-selection-status">ANDAR 1</span><strong id="floor-selection-name">Início da incursão</strong><small id="floor-selection-description">Conclua o objetivo para abrir o próximo andar.</small></div>
+          <button class="primary-button" id="floor-enter-button" type="button">Entrar no andar 1</button>
+        </div>
+      </section>
+      <footer id="region-dialog-footer">Regiões anteriores permanecem disponíveis depois de novas conquistas.</footer>
     </div>
   </dialog>
 

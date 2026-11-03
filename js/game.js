@@ -1,10 +1,10 @@
 import { EQUIPMENT_SLOTS, GAME_CONFIG, ITEMS, RARITIES, SKILLS } from "./data.js";
 import {
-  abandonCaveExpedition, advanceCaveFloor, beginCaveExpedition, canSpawnCommonEnemies,
+  abandonCaveExpedition, advanceCaveFloor, beginCaveExpedition, canSelectCaveFloor, canSpawnCommonEnemies,
   createEncounterSpec, ENEMY_STATES, EXPEDITION_STATES, finishCaveExit,
-  getFloorAdvanceState, getFloorUnlockTarget, getRegionConfig, grantEncounterRewards,
+  getCaveTier, getFloorAdvanceState, getFloorUnlockTarget, getRegionConfig, grantEncounterRewards,
   markBossSpawned, prepareExpeditionAfterLoad, recordFloorKill, regionUnlockStatus,
-  startNewCaveExpedition, stayOnCompletedFloor
+  startBossRematch, startExpeditionAtFloor, startNewCaveExpedition, stayOnCompletedFloor
 } from "./dungeon.js";
 import {
   addOwnedProjectile, claimEnemyReward, createFarmRuntime, updateFarmSpawner
@@ -48,7 +48,7 @@ const ui = Object.fromEntries([
   "potion-count", "coin-count", "potion-button", "cave-progress", "objective-title",
   "objective-detail", "location-badge", "interaction-prompt", "interaction-text", "enemy-hud",
   "objective-progress", "objective-floor", "objective-kills", "objective-actions",
-  "floor-advance-button", "floor-stay-button", "floor-exit-button",
+  "floor-advance-button", "floor-stay-button", "floor-select-button", "boss-rematch-button", "floor-exit-button",
   "enemy-name", "enemy-phase", "enemy-hp-text", "enemy-hp-bar", "toast", "merchant-dialog", "merchant-coins",
   "damage-price", "armor-price", "potion-price", "rest-price", "death-dialog", "return-button", "sound-button",
   "fullscreen-button", "help-button", "help-dialog", "help-close-button", "viewport", "save-status", "inventory-button", "inventory-summary",
@@ -62,7 +62,9 @@ const ui = Object.fromEntries([
   "forge-button", "forge-sell-button", "skill-hotbar", "stamina-bar", "stamina-text",
   "skills-button", "skills-dialog", "skills-close-button", "skill-points", "active-skills-list",
   "passive-skills-list", "mastery-emblem", "sword-mastery-level", "sword-mastery-bar", "sword-mastery-text",
-  "region-button", "region-dialog", "region-close-button", "region-grid", "journey-region-name",
+  "region-button", "region-dialog", "region-close-button", "region-header", "region-grid", "region-dialog-footer", "journey-region-name",
+  "floor-selector", "floor-selector-back", "floor-selector-title", "floor-selector-progress", "floor-grid",
+  "floor-selection-status", "floor-selection-name", "floor-selection-description", "floor-enter-button",
   "grove-journey-row", "grove-journey-status"
 ].map(id => [id, document.querySelector(`#${id}`)]));
 
@@ -97,6 +99,9 @@ let selectedForgeUid = null;
 let forgeBusy = false;
 let merchantBusy = false;
 let selectedMerchantSaleUid = null;
+let floorSelectorRegionId = null;
+let floorSelectorChoice = 1;
+let floorSelectorOpenedFromCave = false;
 let pendingFloorAdvance = false;
 let forgeEffectTimer = 0;
 let skillRuntime = createSkillRuntime();
@@ -490,6 +495,8 @@ function updateUI() {
   ui["objective-actions"].hidden = true;
   ui["floor-advance-button"].hidden = true;
   ui["floor-stay-button"].hidden = true;
+  ui["floor-select-button"].hidden = true;
+  ui["boss-rematch-button"].hidden = true;
   ui["floor-exit-button"].hidden = true;
   ui["floor-advance-button"].classList.remove("pending");
 
@@ -504,6 +511,8 @@ function updateUI() {
       ui["objective-detail"].textContent = "Boss derrotado · recolha seus itens e saia quando desejar";
       ui["objective-kills"].textContent = "CONCLUÍDA";
       ui["objective-actions"].hidden = false;
+      ui["boss-rematch-button"].hidden = false;
+      ui["floor-select-button"].hidden = false;
       ui["floor-exit-button"].hidden = false;
     } else if (expeditionState === EXPEDITION_STATES.BOSS_ACTIVE) {
       ui["objective-title"].textContent = enemy ? `${enemy.name} está em combate` : "O Boss se aproxima";
@@ -520,12 +529,14 @@ function updateUI() {
       ui["objective-actions"].hidden = false;
       ui["floor-advance-button"].hidden = false;
       ui["floor-stay-button"].hidden = false;
+      ui["floor-select-button"].hidden = false;
       ui["floor-advance-button"].textContent = `Avançar ao andar ${advanceState.nextFloor}`;
     } else if (expeditionState === EXPEDITION_STATES.FARMING) {
-      ui["objective-title"].textContent = `Andar ${displayedFloor} concluído`;
+      ui["objective-title"].textContent = `Farm livre · Andar ${displayedFloor}`;
       ui["objective-detail"].textContent = `Farm livre · ${expedition.farmKills[displayedFloor] || 0} abates adicionais`;
       ui["objective-actions"].hidden = false;
       ui["floor-advance-button"].hidden = false;
+      ui["floor-select-button"].hidden = false;
       ui["floor-advance-button"].textContent = `Avançar ao andar ${advanceState.nextFloor}`;
     } else {
       ui["objective-title"].textContent = activeThreats ? `${activeThreats} ameaça(s) ativa(s)` : "A próxima onda se aproxima";
@@ -1267,6 +1278,10 @@ function drawItemIcon(canvasElement, item, fallbackKind = "item") {
 function openRegions() {
   if (!playing || state.world.scene !== "village" || dialogOpen()) return;
   keys.clear();
+  ui["region-header"].hidden = false;
+  ui["region-grid"].hidden = false;
+  ui["floor-selector"].hidden = true;
+  ui["region-dialog-footer"].textContent = "Regiões anteriores permanecem disponíveis depois de novas conquistas.";
   ui["region-grid"].replaceChildren(...Object.entries(GAME_CONFIG.regions).sort((a, b) => a[1].order - b[1].order).map(([id, definition]) => {
     const status = regionUnlockStatus(state.world, id);
     const progress = state.world.regionProgress[id];
@@ -1278,7 +1293,7 @@ function openRegions() {
       montanhas_lamento: "Picos antigos aguardam uma futura expedição.", catacumbas_esquecidas: "Os mortos permanecem preparados em dados.", fortaleza_eclipse: "A cidadela final permanece além do horizonte."
     };
     const buttonLabel = definition.status === "planned" ? "Em preparação" : status.unlocked
-      ? progress?.expedition ? `Retomar andar ${progress.expedition.floor}` : "Iniciar incursão"
+      ? progress?.expedition ? `Escolher andar · atual ${progress.expedition.floor}` : "Escolher andar"
       : status.reason;
     const progressLabel = progress?.expedition
       ? `Incursão ${progress.expedition.floor} / ${getRegionConfig(id).totalFloors}`
@@ -1293,8 +1308,103 @@ function openRegions() {
 function enterRegion(regionId) {
   const status = regionUnlockStatus(state.world, regionId);
   if (!status.unlocked) return showToast(status.reason, true);
-  state.world.currentRegionId = regionId;
+  openFloorSelector(regionId);
+}
+
+function openFloorSelector(regionId, options = {}) {
+  const status = regionUnlockStatus(state.world, regionId);
+  if (!status.unlocked) return showToast(status.reason, true);
+  const progress = state.world.regionProgress[regionId];
+  const config = getRegionConfig(regionId);
+  floorSelectorRegionId = regionId;
+  floorSelectorOpenedFromCave = Boolean(options.fromCave);
+  const preferred = progress.expedition?.floor || progress.selectedFloor || progress.highestUnlockedFloor;
+  floorSelectorChoice = clamp(Math.floor(Number(preferred) || 1), 1, progress.highestUnlockedFloor);
+  ui["region-header"].hidden = true;
+  ui["region-grid"].hidden = true;
+  ui["floor-selector"].hidden = false;
+  ui["floor-selector-back"].textContent = floorSelectorOpenedFromCave ? "← Voltar ao combate" : "← Voltar às regiões";
+  ui["region-dialog-footer"].textContent = floorSelectorOpenedFromCave
+    ? "A troca encerra as ameaças atuais sem conceder recompensas pendentes."
+    : "Somente andares já desbloqueados podem ser selecionados.";
+  renderFloorSelector();
+  if (!ui["region-dialog"].open) ui["region-dialog"].showModal();
+}
+
+function renderFloorSelector() {
+  const regionId = floorSelectorRegionId;
+  const definition = GAME_CONFIG.regions[regionId];
+  const progress = state.world.regionProgress[regionId];
+  const config = getRegionConfig(regionId);
+  ui["floor-selector-title"].textContent = definition.name;
+  ui["floor-selector-progress"].textContent = `Melhor avanço: andar ${progress.highestUnlockedFloor} de ${config.totalFloors}`;
+  ui["floor-grid"].replaceChildren(...Array.from({ length: config.totalFloors }, (_, index) => {
+    const floor = index + 1;
+    const selection = canSelectCaveFloor(progress, floor, config);
+    const completed = floor < progress.highestUnlockedFloor || Boolean(progress.floorObjectivesCompleted[floor]);
+    const tile = document.createElement("button");
+    tile.type = "button";
+    tile.className = `floor-tile${completed ? " completed" : ""}${floor === progress.highestUnlockedFloor ? " frontier" : ""}${floor === config.totalFloors ? " boss" : ""}${floor === floorSelectorChoice ? " selected" : ""}`;
+    tile.disabled = !selection.ok;
+    tile.setAttribute("role", "option");
+    tile.setAttribute("aria-selected", String(floor === floorSelectorChoice));
+    tile.setAttribute("aria-label", selection.ok ? `Selecionar andar ${floor}` : `Andar ${floor} bloqueado`);
+    tile.innerHTML = `<strong>${floor}</strong><small>${selection.ok ? completed ? "farm" : "atual" : "bloqueado"}</small>`;
+    tile.addEventListener("click", () => { floorSelectorChoice = floor; renderFloorSelector(); });
+    return tile;
+  }));
+
+  const selection = canSelectCaveFloor(progress, floorSelectorChoice, config);
+  const boss = floorSelectorChoice === config.totalFloors;
+  const completed = floorSelectorChoice < progress.highestUnlockedFloor || Boolean(progress.floorObjectivesCompleted[floorSelectorChoice]);
+  const tier = boss ? config.boss : getCaveTier(floorSelectorChoice, config);
+  ui["floor-selection-status"].textContent = boss ? `ANDAR ${floorSelectorChoice} · CHEFE` : `ANDAR ${floorSelectorChoice}`;
+  ui["floor-selection-name"].textContent = boss
+    ? selection.bossRematch ? `Reencontro: ${tier.names?.[0] || "Chefe"}` : `Covil: ${tier.names?.[0] || "Chefe"}`
+    : `${tier.label} · ${completed ? "farm livre" : "progressão"}`;
+  ui["floor-selection-description"].textContent = boss
+    ? selection.bossRematch
+      ? "O chefe será invocado diretamente. A recompensa única não se repete."
+      : `Conclua ${getFloorUnlockTarget(floorSelectorChoice, config)} abates para iniciar o confronto.`
+    : completed
+      ? "Permaneça o quanto quiser; o desbloqueio conquistado não será perdido."
+      : `${progress.floorKills[floorSelectorChoice] || 0} de ${getFloorUnlockTarget(floorSelectorChoice, config)} abates registrados para liberar o próximo andar.`;
+  ui["floor-enter-button"].disabled = !selection.ok;
+  ui["floor-enter-button"].textContent = selection.bossRematch ? "Reenfrentar chefe" : `Entrar no andar ${floorSelectorChoice}`;
+}
+
+function closeOrBackFloorSelector() {
+  if (floorSelectorOpenedFromCave) {
+    ui["region-dialog"].close();
+    return;
+  }
+  ui["region-header"].hidden = false;
+  ui["region-grid"].hidden = false;
+  ui["floor-selector"].hidden = true;
+  ui["region-dialog-footer"].textContent = "Regiões anteriores permanecem disponíveis depois de novas conquistas.";
+}
+
+function enterSelectedFloor() {
+  if (!floorSelectorRegionId) return false;
+  const config = getRegionConfig(floorSelectorRegionId);
+  const progress = state.world.regionProgress[floorSelectorRegionId];
+  const result = startExpeditionAtFloor(progress, floorSelectorChoice, config);
+  if (!result.ok) {
+    showToast(result.reason, true);
+    renderFloorSelector();
+    return false;
+  }
+  state.world.currentRegionId = floorSelectorRegionId;
   if (ui["region-dialog"].open) ui["region-dialog"].close();
+  enterCave();
+  return true;
+}
+
+function rematchCurrentBoss() {
+  const progress = currentRegionProgress();
+  const config = currentRegionConfig();
+  const result = startBossRematch(progress, config);
+  if (!result.ok) return showToast(result.reason, true);
   enterCave();
 }
 
@@ -3306,6 +3416,8 @@ ui["skills-button"].addEventListener("click", openSkills);
 ui["skills-close-button"].addEventListener("click", closeSkills);
 ui["region-button"].addEventListener("click", openRegions);
 ui["region-close-button"].addEventListener("click", () => ui["region-dialog"].close());
+ui["floor-selector-back"].addEventListener("click", closeOrBackFloorSelector);
+ui["floor-enter-button"].addEventListener("click", enterSelectedFloor);
 ui["inventory-dialog"].addEventListener("close", hideItemTooltip);
 ui["merchant-forge-button"].addEventListener("click", openForge);
 ui["merchant-sell-button"].addEventListener("click", sellMerchantEquipment);
@@ -3315,6 +3427,8 @@ ui["forge-sell-button"].addEventListener("click", sellSelectedEquipment);
 ui["return-button"].addEventListener("click", returnToVillage);
 ui["floor-advance-button"].addEventListener("click", requestFloorAdvance);
 ui["floor-stay-button"].addEventListener("click", remainOnCurrentFloor);
+ui["floor-select-button"].addEventListener("click", () => openFloorSelector(state.world.currentRegionId, { fromCave: true }));
+ui["boss-rematch-button"].addEventListener("click", rematchCurrentBoss);
 ui["floor-exit-button"].addEventListener("click", exitCave);
 ui["help-button"].addEventListener("click", () => {
   if (!ui["help-dialog"].open) ui["help-dialog"].showModal();

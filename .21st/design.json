@@ -56,7 +56,8 @@
     "Keep cave progression inside the existing objective card: two compact actions for Advance/Stay, one full-width Exit action after a boss, and no blocking completion modal.",
     "Use one compact dark-fantasy authentication panel on the existing start screen: show login or registration one at a time, keep visitor access visually separate, and reveal journey actions only after a session mode is chosen.",
     "Treat the opening as a cinematic title layer over the live village Canvas: use an original inline shield-and-helm emblem, a restrained gold wordmark, a left-aligned action menu, and no gameplay chrome.",
-    "Keep controls in a dedicated help dialog available from a discreet top-right button instead of reserving permanent vertical space below the world."
+    "Keep controls in a dedicated help dialog available from a discreet top-right button instead of reserving permanent vertical space below the world.",
+    "Expose unlocked cave floors through a compact five-column selector inside the region dialog, clearly distinguishing farm, frontier, locked, and boss states; allow direct boss rematches after the first victory."
   ],
   "evidence": [],
   "generatedAt": "2026-10-29T04:00:00.000Z"

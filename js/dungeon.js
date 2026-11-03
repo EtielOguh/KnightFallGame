@@ -180,6 +180,76 @@ export function startNewCaveExpedition(progress, config = GAME_CONFIG.firstCave,
   return progress.expedition;
 }
 
+export function canSelectCaveFloor(progress, floor, config = GAME_CONFIG.firstCave) {
+  const requestedFloor = Math.floor(Number(floor));
+  if (!Number.isInteger(requestedFloor) || requestedFloor < 1 || requestedFloor > config.totalFloors) {
+    return { ok: false, reason: "Andar inválido.", floor: requestedFloor };
+  }
+  const highestUnlockedFloor = integer(progress?.highestUnlockedFloor, 1, 1, config.totalFloors);
+  if (requestedFloor > highestUnlockedFloor) {
+    return { ok: false, reason: `O andar ${requestedFloor} ainda não foi desbloqueado.`, floor: requestedFloor, highestUnlockedFloor };
+  }
+  const bossFloor = requestedFloor === config.totalFloors;
+  return {
+    ok: true,
+    floor: requestedFloor,
+    highestUnlockedFloor,
+    bossFloor,
+    bossRematch: bossFloor && (progress?.bossVictories || 0) > 0
+  };
+}
+
+export function startExpeditionAtFloor(progress, floor, config = GAME_CONFIG.firstCave, options = {}) {
+  const selection = canSelectCaveFloor(progress, floor, config);
+  if (!selection.ok) return selection;
+
+  const previous = progress.expedition;
+  if (previous?.floor) {
+    const previousFloor = integer(previous.floor, 1, 1, config.totalFloors);
+    const previousKills = integer(previous.floorKills?.[previousFloor], 0, 0, getFloorUnlockTarget(previousFloor, config));
+    progress.floorKills[previousFloor] = Math.max(progress.floorKills[previousFloor] || 0, previousKills);
+  }
+
+  const expedition = createExpedition(config.id, config, options);
+  const target = getFloorUnlockTarget(selection.floor, config);
+  const savedKills = integer(progress.floorKills?.[selection.floor], 0, 0, target);
+  const previouslyCompleted = selection.floor < selection.highestUnlockedFloor
+    || Boolean(progress.floorObjectivesCompleted?.[selection.floor]);
+  expedition.floor = selection.floor;
+  expedition.floorKills[selection.floor] = savedKills;
+
+  if (selection.bossFloor) {
+    const bossReady = selection.bossRematch || previouslyCompleted;
+    expedition.state = bossReady ? EXPEDITION_STATES.BOSS_PENDING : EXPEDITION_STATES.BOSS_PREPARATION;
+    expedition.bossUnlocked = bossReady;
+    if (bossReady) {
+      expedition.floorKills[selection.floor] = target;
+      expedition.completedFloors[selection.floor] = true;
+    }
+  } else if (previouslyCompleted) {
+    expedition.state = EXPEDITION_STATES.FARMING;
+    expedition.floorKills[selection.floor] = target;
+    expedition.completedFloors[selection.floor] = true;
+    expedition.farmKills[selection.floor] = 0;
+  } else {
+    expedition.state = EXPEDITION_STATES.ACTIVE;
+  }
+
+  progress.expedition = expedition;
+  progress.selectedFloor = selection.floor;
+  return {
+    ok: true,
+    floor: selection.floor,
+    expedition,
+    mode: selection.bossRematch ? "boss_rematch" : previouslyCompleted ? "farm" : selection.bossFloor ? "boss_preparation" : "progression"
+  };
+}
+
+export function startBossRematch(progress, config = GAME_CONFIG.firstCave, options = {}) {
+  if ((progress?.bossVictories || 0) < 1) return { ok: false, reason: "Derrote o chefe antes de iniciar um reencontro." };
+  return startExpeditionAtFloor(progress, config.totalFloors, config, options);
+}
+
 export function abandonCaveExpedition(progress) {
   return progress.expedition?.floor || progress.selectedFloor || 1;
 }
